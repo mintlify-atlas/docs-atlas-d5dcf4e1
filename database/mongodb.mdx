@@ -1,10 +1,10 @@
 ---
-title: "Configure MongoDB for Hardware Component Data"
+title: "Set Up MongoDB for InventarioITU Hardware Component Data"
 sidebarTitle: "MongoDB"
-description: "Set up MongoDB (inventario-db) for InventarioITU to store per-machine hardware component documents. Covers Docker setup, collection init, and connection string configuration."
+description: "Set up inventario-db for InventarioITU: Docker run, collection init, and connection strings for storing per-machine hardware component documents."
 ---
 
-MongoDB stores the detailed hardware component data for every computer in InventarioITU's inventory. Unlike lab room assignments — which have a fixed, predictable structure — hardware configurations vary significantly from machine to machine: one PC may have two storage drives and 16 GB of RAM, while another has a single SSD and 4 GB. A document database maps naturally onto this variability, allowing each equipment record to carry exactly the fields it needs without requiring nullable columns or separate lookup tables. The service is named `inventario-db` throughout the stack and exposes the standard MongoDB port 27017.
+MongoDB stores the detailed hardware component data for every computer in InventarioITU's inventory. Unlike lab room assignments — which have a fixed, predictable structure — hardware configurations vary significantly from machine to machine: one PC may have two storage drives and 16 GB of RAM, while another has a single SSD and 4 GB. A document database maps naturally onto this variability, allowing each equipment record to carry exactly the fields it needs without requiring nullable columns or separate lookup tables. The service is named `inventario-db` throughout the stack and exposes the standard MongoDB port **27017**.
 
 ## The `inventario-db` Service
 
@@ -19,7 +19,7 @@ MongoDB stores the detailed hardware component data for every computer in Invent
 | Default admin user | `admin` |
 
 <Note>
-  Initialization scripts and seed JSON documents are stored in `db/mongodb/` inside the repository. Review that directory when bootstrapping a new environment or resetting a development instance.
+  Initialization scripts and seed JSON documents belong in `db/mongodb/` inside the repository. That directory currently contains placeholder files — when you add your init scripts or seed data there, reference them from this guide to streamline environment bootstrapping.
 </Note>
 
 ## Run MongoDB Locally with Docker

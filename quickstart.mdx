@@ -1,7 +1,7 @@
 ---
-title: "Get Started with InventarioITU"
+title: "InventarioITU Quickstart: Local Deployment with Minikube"
 sidebarTitle: "Quickstart"
-description: "Stand up the full InventarioITU stack locally using Docker and Minikube in under 30 minutes with step-by-step setup instructions."
+description: "Stand up the full InventarioITU stack locally using Docker and Minikube in under 30 minutes, with step-by-step instructions for every service."
 ---
 
 This quickstart walks you through cloning the InventarioITU repository, launching a local Kubernetes cluster with Minikube, deploying all four services — the Node.js web frontend, SQL Server, MongoDB, and OpenLDAP — and verifying that everything is running correctly. By the end you will have a fully functional local instance accessible in your browser, ready for database initialization and LDAP configuration.
@@ -53,10 +53,10 @@ Before you begin, make sure the following tools are installed and available on y
   </Step>
 
   <Step title="Apply Kubernetes manifests">
-    Deploy all four InventarioITU services by applying the manifests in the `k8s/` directory. The `-f k8s/` flag recursively applies every manifest file found in the directory and its subdirectories, including Deployments, Services, ConfigMaps, PersistentVolumeClaims, and Calico NetworkPolicies.
+    Deploy all four InventarioITU services by applying the manifests in the `k8s/` directory. The `--recursive` flag ensures kubectl descends into all subdirectories, applying every manifest for Deployments, Services, ConfigMaps, PersistentVolumeClaims, and Calico NetworkPolicies.
 
     ```bash
-    kubectl apply -f k8s/
+    kubectl apply -R -f k8s/
     ```
 
     Kubernetes will create the objects and begin pulling container images. Depending on your internet connection, image pulls may take a few minutes on first run.
@@ -89,7 +89,7 @@ Before you begin, make sure the following tools are installed and available on y
     minikube service inventario-web --url
     ```
 
-    Minikube will print a URL such as `http://192.168.49.2:30080`. Open that address in your browser to reach the InventarioITU login page. You will need valid LDAP credentials to log in — see the [LDAP Configuration](#next-steps) guide for how to seed the directory with initial user accounts.
+    Minikube will print a URL such as `http://192.168.49.2:30080`. Open that address in your browser to reach the InventarioITU login page. You will need valid LDAP credentials to log in — see the [LDAP Configuration](/operations/ldap-configuration) guide for how to seed the directory with initial user accounts.
   </Step>
 </Steps>
 

@@ -1,10 +1,10 @@
 ---
-title: "Equipment Inventory Management in ITU Labs"
+title: "Equipment Inventory Management for ITU Mendoza Labs"
 sidebarTitle: "Inventory Management"
-description: "Track computer lab equipment location and assignment across ITU Mendoza with SQL Server-backed queries, room-level granularity, and a Node.js web interface."
+description: "Track lab equipment location and assignment across ITU Mendoza with relational DB queries, room-level granularity, and a Node.js/Express web interface."
 ---
 
-InventarioITU gives administrators and staff a single, authoritative view of every computer across ITU Mendoza's labs. The inventory management module records where each piece of equipment lives, who or what it is assigned to, and what operational state it is in — all stored in SQL Server and surfaced through the Node.js/Express web interface on `inventario-web` (port 3000). This means you can answer questions like "which machines in Lab 3 are currently unassigned?" or "what is the status of equipment ITU-0142?" without walking the building.
+InventarioITU gives administrators and staff a single, authoritative view of every computer across ITU Mendoza's labs. The inventory management module records where each piece of equipment lives, who or what it is assigned to, and what operational state it is in — all stored in the relational database and surfaced through the Node.js/Express web interface on `inventario-web` (port 3000). This means you can answer questions like "which machines in Lab 3 are currently unassigned?" or "what is the status of equipment ITU-0142?" without walking the building.
 
 ## What Data Is Tracked
 
@@ -46,7 +46,7 @@ The default inventory view groups machines by `laboratorio` and then by `ubicaci
 
 ### Search by Equipment ID
 
-Use the search bar at the top of the inventory page to look up a specific machine by its ID. The query runs directly against the `equipos` table in SQL Server, so results are always current.
+Use the search bar at the top of the inventory page to look up a specific machine by its ID. The query runs directly against the `equipos` table in the relational database, so results are always current.
 
 ```sql
 -- Example: look up a single machine by ID
@@ -68,14 +68,18 @@ WHERE laboratorio = 'Laboratorio 2'
 ORDER BY ubicacion;
 ```
 
-## Data Source: SQL Server (`ubicacion-db`)
+## Data Source: Relational DB (`ubicacion-db`)
 
-Location and assignment data lives in the `ubicacion-db` SQL Server instance, which is reachable inside the cluster on **port 1433**. The `inventario-web` backend connects to it using the credentials provided via environment variables at container startup.
+Location and assignment data lives in the `ubicacion-db` relational database instance, which is reachable inside the cluster on **port 1433**. The project supports both **SQL Server** and **MySQL** as the underlying relational engine — the README specifies "SQL Server / MySQL", so either can be used depending on your deployment environment. The `inventario-web` backend connects using the credentials provided via environment variables at container startup.
 
-The core table schema is:
+<Note>
+  The README specifies SQL Server / MySQL as supported relational backends. SQL Server uses TDS on port 1433; if you deploy MySQL instead, the port remains 3306 by default. Adjust your environment variables and connection driver accordingly.
+</Note>
+
+The core table schema below is an illustrative example of how the `equipos` table can be structured. When you add schema scripts to `db/sqlserver/` (or `db/mysql/`), define the table to match your chosen engine's syntax:
 
 ```sql
--- Core equipment location and assignment table
+-- Example: equipment location and assignment table (SQL Server syntax)
 CREATE TABLE equipos (
     id            VARCHAR(50)   PRIMARY KEY,        -- matches MongoDB _id
     nombre        VARCHAR(100)  NOT NULL,
@@ -92,7 +96,7 @@ CREATE TABLE equipos (
 ```
 
 <Note>
-  The `id` column in `equipos` is intentionally kept in sync with the `_id` field in the corresponding MongoDB hardware document. This shared key lets the web app join location data from SQL Server with hardware component data from MongoDB in a single page render without a foreign-key constraint spanning two database engines.
+  The `id` column in `equipos` is intentionally kept in sync with the `_id` field in the corresponding MongoDB hardware document. This shared key lets the web app join location data from the relational DB with hardware component data from MongoDB in a single page render without a foreign-key constraint spanning two database engines.
 </Note>
 
 ### Connection Details
@@ -100,8 +104,7 @@ CREATE TABLE equipos (
 | Setting | Value |
 |---|---|
 | Service name | `ubicacion-db` |
-| Port | `1433` |
-| Protocol | TDS (SQL Server native) |
-| Driver (Node.js) | `mssql` / `tedious` |
+| Port | `1433` (SQL Server) / `3306` (MySQL) |
+| Protocol | TDS (SQL Server) or MySQL protocol |
 
-The backend reads the connection string from environment variables so that credentials never appear in source code. Refer to the deployment manifests under `k8s/sqlserver/` for the Kubernetes `Secret` and `ConfigMap` definitions.
+The backend reads the connection string from environment variables so that credentials never appear in source code. When you add Kubernetes manifests under `k8s/sqlserver/`, define a `Secret` and `ConfigMap` there for the connection credentials.

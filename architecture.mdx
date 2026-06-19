@@ -1,10 +1,10 @@
 ---
-title: "InventarioITU System Architecture Overview"
+title: "InventarioITU Architecture: Services, Data Flow, Networking"
 sidebarTitle: "Architecture"
-description: "InventarioITU connects four containerized services: a Node.js web app, SQL Server, MongoDB, and OpenLDAP, orchestrated on Kubernetes with Calico network policies."
+description: "How InventarioITU's four containerized services — Node.js, SQL Server/MySQL, MongoDB, and OpenLDAP — connect on Kubernetes with Calico policies."
 ---
 
-InventarioITU is built as a set of four cooperating containerized services running inside a Kubernetes cluster. The Node.js web application acts as the single entry point for all browser traffic, delegating authentication requests to OpenLDAP and database queries to whichever backend holds the relevant data — SQL Server for structured location and assignment records, MongoDB for flexible hardware component documents. Calico serves as the cluster's CNI plugin and enforces NetworkPolicy rules that strictly limit which pods can talk to which, so that the database services are never reachable directly from outside the cluster.
+InventarioITU is built as a set of four cooperating containerized services running inside a Kubernetes cluster. The Node.js web application acts as the single entry point for all browser traffic, delegating authentication requests to OpenLDAP and database queries to whichever backend holds the relevant data — SQL Server or MySQL for structured location and assignment records, MongoDB for flexible hardware component documents. Calico serves as the cluster's CNI plugin and enforces NetworkPolicy rules that strictly limit which pods can talk to which, so that the database services are never reachable directly from outside the cluster.
 
 ## Service Table
 

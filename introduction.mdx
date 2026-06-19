@@ -1,7 +1,7 @@
 ---
 title: "InventarioITU: Centralized Lab Equipment Inventory"
 sidebarTitle: "Introduction"
-description: "InventarioITU manages computer lab equipment at ITU Mendoza using a dual-database architecture, LDAP authentication, and containerized Kubernetes deployment."
+description: "InventarioITU manages ITU Mendoza computer lab equipment using a dual-database architecture, LDAP authentication, and containerized Kubernetes deployment."
 ---
 
 InventarioITU is a centralized inventory system built to track and manage the computer equipment across the laboratory facilities of ITU Mendoza (Instituto Tecnológico Universitario). Designed for IT administrators and lab coordinators, the system provides a unified web interface for querying where each machine is physically located, who it is assigned to, and what hardware components it contains — all secured behind institutional LDAP authentication and deployed as a fully containerized application on Kubernetes.
@@ -21,7 +21,7 @@ InventarioITU is composed of four cooperating services, each running as its own 
   <Card title="Architecture" icon="sitemap" href="/architecture">
     Understand how the four services connect, how data flows through the system, and how Calico network policies govern inter-pod communication.
   </Card>
-  <Card title="Core Features" icon="list-check" href="/introduction#core-features">
+  <Card title="Core Features" icon="list-check" href="/features/inventory-management">
     Dual-database design, LDAP-backed authentication, Kubernetes-native deployment, and host-level firewall hardening with GUFW.
   </Card>
   <Card title="Database Setup" icon="database" href="/database/sqlserver">
@@ -47,7 +47,7 @@ InventarioITU was designed around a set of practical operational requirements fo
 | Technology | Role in InventarioITU |
 |---|---|
 | **Node.js + Express** | Powers `inventario-web` — handles HTTP routing, server-side rendering, and proxies queries to both database backends |
-| **SQL Server** | Stores structured location, room, lab, and equipment assignment records in the `ubicacion-db` service |
+| **SQL Server / MySQL** | Stores structured location, room, lab, and equipment assignment records in the `ubicacion-db` service |
 | **MongoDB** | Stores hardware component documents (flexible schema) in the `inventario-db` service |
 | **OpenLDAP** | Provides the LDAP directory used to authenticate all web application users via the `ldap-service` |
 | **Docker** | Packages each service as a portable, reproducible container image |

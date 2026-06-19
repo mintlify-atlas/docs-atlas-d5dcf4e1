@@ -1,10 +1,10 @@
 ---
-title: "Containerize InventarioITU with Docker"
+title: "Build and Deploy InventarioITU Services with Docker"
 sidebarTitle: "Docker"
-description: "Build and run all InventarioITU services as Docker containers. Covers Dockerfile structure, image builds, and docker-compose setup for local development."
+description: "Build and run all InventarioITU services as Docker containers. Covers Dockerfile structure, image builds, and docker-compose for local development."
 ---
 
-Docker is the containerization backbone of InventarioITU. Every service in the stack — the Node.js web frontend, the SQL Server database for location and assignment data, the MongoDB database for hardware component records, and the OpenLDAP authentication server — runs as an isolated container. This approach ensures consistent behavior across development machines and production infrastructure, eliminates dependency conflicts, and makes the entire system reproducible with a single command.
+Docker is the containerization backbone of InventarioITU. Every service in the stack — the Node.js web frontend, the relational database for location and assignment data, the MongoDB database for hardware component records, and the OpenLDAP authentication server — runs as an isolated container. This approach ensures consistent behavior across development machines and production infrastructure, eliminates dependency conflicts, and makes the entire system reproducible with a single command.
 
 ## Services Overview
 
@@ -15,7 +15,7 @@ InventarioITU is composed of four containers, each with a distinct responsibilit
     The Node.js + Express web application. Serves the inventory UI on port **3000** and connects outward to all three backend services.
   </Card>
   <Card title="ubicacion-db" icon="database">
-    A Microsoft SQL Server 2022 instance on port **1433**. Stores relational data about lab locations and equipment assignments.
+    A relational database instance (SQL Server 2022 or MySQL, depending on your chosen setup) on port **1433**. Stores data about lab locations and equipment assignments.
   </Card>
   <Card title="inventario-db" icon="leaf">
     A MongoDB 7 instance on port **27017**. Stores flexible hardware component documents for each inventoried machine.
@@ -29,6 +29,8 @@ InventarioITU is composed of four containers, each with a distinct responsibilit
 
 The `inventario-web` image is built from the `app/` directory at the root of the repository. It uses the lightweight `node:18-alpine` base image to keep the final image size small and the attack surface minimal. Production dependencies are installed with `npm ci --only=production` to guarantee a reproducible install from the lockfile.
 
+Save a Dockerfile like this as `app/Dockerfile` in your project:
+
 ```dockerfile
 FROM node:18-alpine
 WORKDIR /app
@@ -39,11 +41,17 @@ EXPOSE 3000
 CMD ["node", "server.js"]
 ```
 
-Place this `Dockerfile` inside the `app/` directory. The `COPY package*.json ./` layer is intentionally separated from `COPY . .` so that Docker can cache the dependency installation step and avoid re-running `npm ci` on every source code change.
+The `COPY package*.json ./` layer is intentionally separated from `COPY . .` so that Docker can cache the dependency installation step and avoid re-running `npm ci` on every source code change.
 
 ## docker-compose.yml
 
-For local development, `docker-compose` brings up the complete four-service stack in a single step. All services join a dedicated bridge network (`inventario-net`) so they can reach each other by service name — the web app connects to `ubicacion-db`, `inventario-db`, and `ldap-service` directly without needing IP addresses.
+For local development, a `docker-compose.yml` file brings up the complete four-service stack in a single step. All services join a dedicated bridge network (`inventario-net`) so they can reach each other by service name — the web app connects to `ubicacion-db`, `inventario-db`, and `ldap-service` directly without needing IP addresses.
+
+Save a compose file like this as `docker-compose.yml` in your project root:
+
+<Note>
+  The `ubicacion-db` service below shows the **SQL Server** image. If your setup uses **MySQL** instead, replace the `image`, `environment`, and `ports` block for `ubicacion-db` with the appropriate MySQL image (e.g., `mysql:8`) and its environment variables. Both options expose the same port **1433** internally for consistency with the rest of the stack configuration.
+</Note>
 
 ```yaml
 version: '3.8'
@@ -94,7 +102,7 @@ networks:
   inventario-net:
 ```
 
-The `depends_on` block on `inventario-web` ensures Docker starts the three backend containers before the web process, though it does not wait for the services inside them to be fully ready. If SQL Server or MongoDB takes a few seconds to initialize, the web app should implement retry logic on its database connection.
+The `depends_on` block on `inventario-web` ensures Docker starts the three backend containers before the web process, though it does not wait for the services inside them to be fully ready. If the relational database or MongoDB takes a few seconds to initialize, the web app should implement retry logic on its database connection.
 
 ## Building and Running
 

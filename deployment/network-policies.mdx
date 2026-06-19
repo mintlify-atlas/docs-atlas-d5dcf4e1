@@ -62,7 +62,7 @@ spec:
           port: 1433
 ```
 
-Apply the same pattern for MongoDB (port 27017, target label `app: inventario-db`) and OpenLDAP (port 389, target label `app: ldap-service`). All three policy manifests live in `k8s/network-policies/` and are applied automatically when you run `kubectl apply -f k8s/`.
+Apply the same pattern for MongoDB (port 27017, target label `app: inventario-db`) and OpenLDAP (port 389, target label `app: ldap-service`). Save all three policy manifests to `k8s/network-policies/` — once you do, they will be applied automatically when you run `kubectl apply -f k8s/`.
 
 ## Host-Level Firewall with GUFW
 

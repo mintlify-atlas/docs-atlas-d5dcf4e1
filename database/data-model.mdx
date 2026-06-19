@@ -1,14 +1,18 @@
 ---
-title: "InventarioITU Dual-Database Data Model"
+title: "InventarioITU Data Model: SQL Server, MySQL, and MongoDB"
 sidebarTitle: "Data Model"
-description: "Understand how InventarioITU splits data across SQL Server and MongoDB: relational location and assignment records in SQL Server, flexible hardware documents in MongoDB."
+description: "How InventarioITU splits data between SQL Server or MySQL and MongoDB, linked by a shared equipment ID for location, assignment, and hardware records."
 ---
 
-InventarioITU deliberately stores its data across two databases because the two main categories of information have fundamentally different shapes. Lab room and equipment assignment data is highly structured and relational — labs have a fixed set of attributes, equipment belongs to exactly one lab, and assignment history forms an auditable chain of foreign-key-linked rows. Hardware component data, by contrast, is flexible and machine-specific: a workstation might have two GPUs and four storage drives while the machine next to it has none of either. Forcing hardware details into a fixed relational schema would require either wide sparse tables or many small auxiliary tables; a document database handles the variability more naturally. By splitting the data at this semantic boundary and linking the two stores by a shared equipment ID, InventarioITU gets the integrity and query power of SQL Server exactly where it needs it, and the schema flexibility of MongoDB everywhere else.
+InventarioITU deliberately stores its data across two databases because the two main categories of information have fundamentally different shapes. Lab room and equipment assignment data is highly structured and relational — labs have a fixed set of attributes, equipment belongs to exactly one lab, and assignment history forms an auditable chain of foreign-key-linked rows. Hardware component data, by contrast, is flexible and machine-specific: a workstation might have two GPUs and four storage drives while the machine next to it has none of either. Forcing hardware details into a fixed relational schema would require either wide sparse tables or many small auxiliary tables; a document database handles the variability more naturally. By splitting the data at this semantic boundary and linking the two stores by a shared equipment ID, InventarioITU gets the integrity and query power of a relational engine exactly where it needs it, and the schema flexibility of MongoDB everywhere else.
 
-## SQL Server Relational Model
+<Note>
+  The project supports **SQL Server** (primary) or **MySQL** as the relational engine — both use the same logical schema described below. The service is named `ubicacion-db` in both cases. See [SQL Server Setup](/database/sqlserver) for engine-specific Docker images and connection strings.
+</Note>
 
-SQL Server hosts the `inventario` database, which contains three tables covering lab metadata, equipment registration, and assignment history.
+## Relational Model (SQL Server / MySQL)
+
+The relational engine (`ubicacion-db`) hosts the `inventario` database, which contains three tables covering lab metadata, equipment registration, and assignment history. The DDL shown below is written for SQL Server; for MySQL, replace `NVARCHAR` with `VARCHAR` and `IDENTITY` with `AUTO_INCREMENT`.
 
 ### `laboratorios`
 
@@ -105,11 +109,11 @@ The ID format follows the convention `<LAB_CODE>-PC-<SEQUENCE>`, where:
 
 | Data | Database | Reason |
 |---|---|---|
-| Lab rooms | SQL Server | Relational, normalized — labs are a stable reference entity |
-| Equipment location & assignment | SQL Server | Structured rows with FK relationships and enforceable constraints |
+| Lab rooms | SQL Server / MySQL | Relational, normalized — labs are a stable reference entity |
+| Equipment location & assignment | SQL Server / MySQL | Structured rows with FK relationships and enforceable constraints |
 | CPU, RAM, storage details | MongoDB | Variable schema per machine — flexible document model avoids sparse columns |
-| Assignment history | SQL Server | Auditable, relational — benefits from FK integrity and SQL aggregation queries |
+| Assignment history | SQL Server / MySQL | Auditable, relational — benefits from FK integrity and SQL aggregation queries |
 
 <Note>
-  The application layer (`inventario-web`) is the only component that queries both databases. It performs the logical join between `equipos` (SQL Server) and `componentes` (MongoDB) by equipment ID at request time. Neither database holds a reference to the other, and there is no cross-database foreign key constraint — consistency is maintained by convention and enforced in application code.
+  The application layer (`inventario-web`) is the only component that queries both databases. It performs the logical join between `equipos` (SQL Server or MySQL, via `ubicacion-db`) and `componentes` (MongoDB, via `inventario-db`) by equipment ID at request time. Neither database holds a reference to the other, and there is no cross-database foreign key constraint — consistency is maintained by convention and enforced in application code.
 </Note>

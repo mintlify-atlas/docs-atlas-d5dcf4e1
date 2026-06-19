@@ -1,25 +1,25 @@
 ---
-title: "Configure SQL Server for Equipment Location Data"
+title: "Set Up SQL Server or MySQL for InventarioITU Location Data"
 sidebarTitle: "SQL Server"
-description: "Set up SQL Server (ubicacion-db) for InventarioITU to store lab equipment location and assignment records. Covers Docker setup, schema init, and connection configuration."
+description: "Set up ubicacion-db for InventarioITU: Docker run, schema init, and connection config for SQL Server or MySQL location and assignment records."
 ---
 
-SQL Server serves as the relational backbone of InventarioITU, storing the structured, normalized data that describes *where* each piece of equipment lives and *who* it is assigned to. Lab room definitions, equipment registration records, and assignment histories all fit naturally into a relational model — rows have predictable shapes, foreign keys enforce referential integrity between labs and machines, and SQL queries make it straightforward to produce audit reports. The service is named `ubicacion-db` throughout the stack and runs on the standard SQL Server port 1433.
+InventarioITU uses a relational database as the backbone for structured, normalized data that describes *where* each piece of equipment lives and *who* it is assigned to. The project supports **SQL Server** (primary) or **MySQL** as the relational engine — both expose the same logical schema. Lab room definitions, equipment registration records, and assignment histories all fit naturally into a relational model: rows have predictable shapes, foreign keys enforce referential integrity between labs and machines, and SQL queries make it straightforward to produce audit reports. The service is named `ubicacion-db` throughout the stack and runs on port **1433** (SQL Server) or **3306** (MySQL).
 
 ## The `ubicacion-db` Service
 
-Within the InventarioITU architecture, `ubicacion-db` is a Microsoft SQL Server 2022 instance responsible exclusively for location and assignment data. It is deployed as a Docker container during local development and as a Kubernetes `Deployment` + `Service` object in the production cluster.
+Within the InventarioITU architecture, `ubicacion-db` is a Microsoft SQL Server 2022 instance (or MySQL 8, depending on your chosen engine) responsible exclusively for location and assignment data. It is deployed as a Docker container during local development and as a Kubernetes `Deployment` + `Service` object in the production cluster.
 
-| Property | Value |
-|---|---|
-| Service name | `ubicacion-db` |
-| Image | `mcr.microsoft.com/mssql/server:2022-latest` |
-| Port | `1433` |
-| Default database | `inventario` |
-| Default user | `sa` |
+| Property | SQL Server value | MySQL value |
+|---|---|---|
+| Service name | `ubicacion-db` | `ubicacion-db` |
+| Image | `mcr.microsoft.com/mssql/server:2022-latest` | `mysql:8` |
+| Port | `1433` | `3306` |
+| Default database | `inventario` | `inventario` |
+| Default user | `sa` | `root` |
 
 <Note>
-  The SQL initialization scripts and schema migration files live in `db/sqlserver/` inside the repository. Review that directory before applying manual changes to a running instance.
+  SQL initialization scripts and schema migration files belong in `db/sqlserver/` inside the repository. That directory currently contains placeholder files — when you add your SQL scripts there, reference them from this guide for easy bootstrapping.
 </Note>
 
 ## Run SQL Server Locally with Docker
@@ -70,7 +70,7 @@ mssql://sa:<DB_PASSWORD>@ubicacion-db:1433/inventario
   </Step>
 
   <Step title="Create the database and tables">
-    Run the following DDL to create the `inventario` database and its core tables. This script is also available as `db/sqlserver/init.sql` in the repository.
+    Run the following DDL to create the `inventario` database and its core tables. This is an illustrative example — you can place it in `db/sqlserver/init.sql` once you are ready to check scripts into the repository.
 
     ```sql
     CREATE DATABASE inventario;

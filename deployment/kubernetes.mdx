@@ -1,10 +1,10 @@
 ---
-title: "Deploy InventarioITU on Kubernetes with Minikube"
+title: "Deploy InventarioITU on Kubernetes Using Minikube CNI"
 sidebarTitle: "Kubernetes"
-description: "Deploy all four InventarioITU services to a Kubernetes cluster using Minikube and kubectl. Covers manifests structure, pod verification, and service exposure."
+description: "Deploy all four InventarioITU services to Kubernetes using Minikube and kubectl. Covers manifest structure, pod verification, and service exposure."
 ---
 
-InventarioITU runs on Kubernetes to gain production-grade scheduling, self-healing, and declarative configuration management. The local development cluster is powered by **Minikube**, and the cluster uses the **Calico** CNI (Container Network Interface) plugin rather than the default Minikube CNI. Calico is required because InventarioITU enforces Kubernetes `NetworkPolicy` objects to restrict inter-pod traffic — the default Minikube networking layer silently ignores these policies. All Kubernetes manifests live under the `k8s/` directory and are organized by service.
+InventarioITU runs on Kubernetes to gain production-grade scheduling, self-healing, and declarative configuration management. The local development cluster is powered by **Minikube**, and the cluster uses the **Calico** CNI (Container Network Interface) plugin rather than the default Minikube CNI. Calico is required because InventarioITU enforces Kubernetes `NetworkPolicy` objects to restrict inter-pod traffic — the default Minikube networking layer silently ignores these policies. Kubernetes manifests should be placed under the `k8s/` directory, organized by service as described in the [Manifest Structure](#manifest-structure) section below.
 
 ## Prerequisites
 
@@ -36,13 +36,13 @@ Before deploying, make sure the following tools are installed and available on y
     You should see at least a `calico-kube-controllers` pod and one `calico-node` pod, both with status `Running`.
   </Step>
   <Step title="Apply All Manifests">
-    Apply the entire `k8s/` directory recursively. kubectl processes every `.yaml` file it finds, creating Deployments, StatefulSets, Services, and NetworkPolicies in dependency order as Kubernetes resolves them.
+    Once you have added your manifest files to the `k8s/` subdirectories, apply the entire directory recursively. kubectl processes every `.yaml` file it finds, creating Deployments, StatefulSets, Services, and NetworkPolicies in dependency order as Kubernetes resolves them.
 
     ```bash
     kubectl apply -f k8s/
     ```
 
-    If you want to apply a single subdirectory (for example, only the frontend):
+    If you want to apply a single subdirectory (for example, only the frontend), once you have added manifests to `k8s/frontend/`:
 
     ```bash
     kubectl apply -f k8s/frontend/
@@ -75,7 +75,7 @@ All Kubernetes manifests are organized under `k8s/` with one subdirectory per se
 | Directory | Contents |
 |---|---|
 | `k8s/frontend/` | `Deployment` and `Service` for **inventario-web** (Node.js app, port 3000) |
-| `k8s/sqlserver/` | `StatefulSet` and `Service` for **ubicacion-db** (SQL Server 2022, port 1433) |
+| `k8s/sqlserver/` | `StatefulSet` and `Service` for **ubicacion-db** (SQL Server 2022 or MySQL, port 1433) |
 | `k8s/mongodb/` | `StatefulSet` and `Service` for **inventario-db** (MongoDB 7, port 27017) |
 | `k8s/ldap/` | `Deployment` and `Service` for **ldap-service** (OpenLDAP, port 389) |
 | `k8s/network-policies/` | Calico `NetworkPolicy` manifests controlling which pods may communicate |
@@ -84,7 +84,7 @@ SQL Server and MongoDB use `StatefulSet` instead of `Deployment` because they re
 
 ## Example Service Manifest
 
-The following manifest exposes `inventario-web` as a `NodePort` service, which makes the web application reachable from outside the cluster through Minikube's node IP. The `selector` must match the `app` label defined on the corresponding `Deployment`'s pod template.
+The following example manifest exposes `inventario-web` as a `NodePort` service, which makes the web application reachable from outside the cluster through Minikube's node IP. Save it to `k8s/frontend/service.yaml` once you are ready to deploy. The `selector` must match the `app` label defined on the corresponding `Deployment`'s pod template.
 
 ```yaml
 apiVersion: v1
@@ -101,7 +101,7 @@ spec:
   type: NodePort
 ```
 
-The `port` field is the port the Service listens on inside the cluster. The `targetPort` is the port the container exposes — matching the `EXPOSE 3000` instruction in the Dockerfile. Kubernetes assigns a random high port (30000–32767) on the node, which `minikube service inventario-web --url` resolves for you.
+The `port` field is the port the Service listens on inside the cluster. The `targetPort` is the port the container exposes — matching the `EXPOSE 3000` instruction in your `app/Dockerfile`. Kubernetes assigns a random high port (30000–32767) on the node, which `minikube service inventario-web --url` resolves for you.
 
 <Tip>
   If a pod fails to start or keeps restarting, `kubectl logs` is the fastest way to diagnose the problem. Fetch logs from the most recent container instance with:
@@ -120,5 +120,5 @@ The `port` field is the port the Service listens on inside the cluster. The `tar
 </Tip>
 
 <Note>
-  SQL Server and MongoDB store their data on disk. In Kubernetes, container filesystems are ephemeral — data is lost when a pod is deleted unless a **PersistentVolumeClaim (PVC)** is attached. The StatefulSet manifests in `k8s/sqlserver/` and `k8s/mongodb/` each declare a `volumeClaimTemplates` section that automatically provisions a PVC backed by Minikube's default `hostPath` storage class. In a production cluster, replace the storage class with a network-backed option (e.g., AWS EBS, Azure Disk, or Ceph) to ensure data durability across node restarts.
+  SQL Server (or MySQL) and MongoDB store their data on disk. In Kubernetes, container filesystems are ephemeral — data is lost when a pod is deleted unless a **PersistentVolumeClaim (PVC)** is attached. When you create the StatefulSet manifests in `k8s/sqlserver/` and `k8s/mongodb/`, include a `volumeClaimTemplates` section to automatically provision a PVC backed by Minikube's default `hostPath` storage class. In a production cluster, replace the storage class with a network-backed option (e.g., AWS EBS, Azure Disk, or Ceph) to ensure data durability across node restarts.
 </Note>

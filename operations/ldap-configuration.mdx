@@ -1,7 +1,7 @@
 ---
 title: "Configure OpenLDAP for InventarioITU Authentication"
 sidebarTitle: "LDAP Configuration"
-description: "Set up OpenLDAP as the authentication backend for InventarioITU. Configure the directory tree, add user accounts, and connect the Node.js app via environment variables."
+description: "Set up OpenLDAP as the authentication backend for InventarioITU. Configure the directory tree, add user accounts, and connect the Node.js app."
 ---
 
 OpenLDAP provides centralized authentication for InventarioITU, acting as the single source of truth for user identities across all lab environments at ITU Mendoza. It runs as the `ldap-service` container and listens on port **389**, allowing the `inventario-web` Node.js application to validate credentials at login time. Every user who accesses the inventory system — whether a lab administrator or teaching staff — must have a valid entry in the OpenLDAP directory.
@@ -34,7 +34,7 @@ docker ps --filter name=ldap-service
 
 InventarioITU organizes LDAP entries under two organizational units: `ou=usuarios` for individual user accounts and `ou=grupos` for role-based groups. This structure maps directly to the access levels enforced by the web application.
 
-```
+```text
 dc=itu,dc=edu,dc=ar
 ├── ou=usuarios
 │   ├── uid=admin
@@ -47,7 +47,7 @@ dc=itu,dc=edu,dc=ar
 Members of `cn=administradores` have full read/write access to inventory records, while members of `cn=docentes` can view equipment assignments but cannot modify them. Create both OUs before adding any user entries.
 
 <Note>
-The `ldap/` directory in the InventarioITU repository contains configuration templates (LDIF files and schema definitions) that you can use as a starting point. Apply them with `ldapadd` after the container is running.
+When you add your LDAP configuration to the `ldap/` directory, you can save LDIF files there and apply them with `ldapadd` after the container is running. The example snippets in this guide can be saved directly into `ldap/` as a starting point.
 </Note>
 
 ## Add a User Account

@@ -1,5 +1,5 @@
 ---
-title: "Troubleshoot Common InventarioITU Issues"
+title: "Troubleshooting Guide for Common InventarioITU Issues"
 sidebarTitle: "Troubleshooting"
 description: "Diagnose and fix common issues in InventarioITU: pods not starting, database connection failures, LDAP authentication errors, and network policy problems."
 ---
@@ -95,13 +95,13 @@ kubectl exec -it <web-pod> -- nc -zv inventario-db 27017
 
 The `inventario-web` container connects to MongoDB via the `MONGO_URI` environment variable. Its value must follow this pattern:
 
-```
+```text
 mongodb://inventario-db:27017/inventario
 ```
 
 If authentication is enabled on the MongoDB instance, the URI must include credentials:
 
-```
+```text
 mongodb://<user>:<password>@inventario-db:27017/inventario?authSource=admin
 ```
 

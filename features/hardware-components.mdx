@@ -1,14 +1,14 @@
 ---
-title: "Hardware Component Records with MongoDB"
+title: "Hardware Component Records Stored in MongoDB per Machine"
 sidebarTitle: "Hardware Components"
-description: "InventarioITU stores detailed hardware component data for each computer in MongoDB. Each document captures CPU, RAM, storage, and peripheral details per machine."
+description: "InventarioITU stores per-machine hardware profiles in MongoDB — CPU, RAM, storage, and peripherals — linked by shared ID to the relational database."
 ---
 
-While SQL Server tracks _where_ a machine is and _who_ it is assigned to, MongoDB tracks _what that machine is made of_. Each computer in the ITU Mendoza labs has a corresponding document in the `inventario-db` MongoDB database that records its CPU model, RAM configuration, storage devices, and connected peripherals. MongoDB was chosen for this layer because hardware profiles are naturally document-shaped — every machine can have a different number of drives, peripheral types, or custom fields — and a schema-flexible document store avoids the friction of altering relational tables every time a new component type is introduced or a batch of machines arrives with a non-standard configuration.
+While the relational database (`ubicacion-db`) tracks _where_ a machine is and _who_ it is assigned to, MongoDB tracks _what that machine is made of_. Each computer in the ITU Mendoza labs has a corresponding document in the `inventario-db` MongoDB database that records its CPU model, RAM configuration, storage devices, and connected peripherals. MongoDB was chosen for this layer because hardware profiles are naturally document-shaped — every machine can have a different number of drives, peripheral types, or custom fields — and a schema-flexible document store avoids the friction of altering relational tables every time a new component type is introduced or a batch of machines arrives with a non-standard configuration. The project's relational backend supports both SQL Server and MySQL; see the [data model reference](/database/data-model) for details on both engines.
 
 ## Document Structure
 
-Every hardware record is stored as a single MongoDB document whose `_id` matches the corresponding `id` in the SQL Server `equipos` table. This shared key is the bridge between the two databases and allows the web application to assemble a complete equipment profile (location + hardware) in one page without a cross-database join.
+Every hardware record is stored as a single MongoDB document whose `_id` matches the corresponding `id` in the relational `equipos` table. This shared key is the bridge between the two databases and allows the web application to assemble a complete equipment profile (location + hardware) in one page without a cross-database join.
 
 ```json
 {
@@ -37,8 +37,8 @@ Every hardware record is stored as a single MongoDB document whose `_id` matches
 
 | Field | Type | Description |
 |---|---|---|
-| `_id` | String | Unique machine identifier; matches `equipos.id` in SQL Server |
-| `ubicacion` | String | Lab room name (redundant with SQL Server, included for standalone queries) |
+| `_id` | String | Unique machine identifier; matches `equipos.id` in the relational DB |
+| `ubicacion` | String | Lab room name (redundant with the relational DB record, included for standalone queries) |
 | `cpu.modelo` | String | Full processor model name |
 | `cpu.nucleos` | Number | Physical core count |
 | `cpu.frecuencia_ghz` | Number | Base clock frequency in GHz |
@@ -52,14 +52,14 @@ Every hardware record is stored as a single MongoDB document whose `_id` matches
 
 ## Querying Hardware Data
 
-The `inventario-db` MongoDB collection supports flexible queries against any field in the document. Below are the most common patterns used by the web application and by administrators running ad-hoc checks.
+The `inventario-db` MongoDB collection supports flexible queries against any field in the document. Below are the most common patterns used by the web application and by administrators running ad-hoc checks. These examples use the official MongoDB Node.js driver; adapt the collection name and connection setup to match your own `app/` implementation once the application code is in place.
 
 ### Filter by Lab
 
 Retrieve all machines in a specific lab room:
 
 ```js
-// Node.js — using the mongodb driver
+// Node.js — example using the mongodb driver
 const db = client.db('inventario');
 const equipos = db.collection('equipos_hardware');
 
@@ -98,7 +98,7 @@ const needsAttention = await equipos.find({
 
 ### Adding a New Machine
 
-When a new computer arrives in a lab, insert a document using the same ID that was assigned to it in SQL Server. Always set `ultima_actualizacion` to the current date so the history stays accurate.
+When a new computer arrives in a lab, insert a document using the same ID that was assigned to it in the relational database (`ubicacion-db`). Always set `ultima_actualizacion` to the current date so the history stays accurate.
 
 ```js
 await equipos.insertOne({
@@ -144,7 +144,7 @@ await equipos.updateOne(
 ```
 
 <Tip>
-  Always keep the MongoDB `_id` in sync with the `id` column in the SQL Server `equipos` table. The web application uses this shared key to fetch both the location record and the hardware document in a single equipment profile page. If the two values diverge — for example, because a machine was re-labelled in one system but not the other — the profile page will show incomplete data and the cross-database lookup will silently return `null` for the hardware section.
+  Always keep the MongoDB `_id` in sync with the `id` column in the relational `equipos` table. The web application uses this shared key to fetch both the location record and the hardware document in a single equipment profile page. If the two values diverge — for example, because a machine was re-labelled in one system but not the other — the profile page will show incomplete data and the cross-database lookup will silently return `null` for the hardware section.
 </Tip>
 
 ## MongoDB Service: `inventario-db`
@@ -161,10 +161,10 @@ The MongoDB instance runs as the `inventario-db` service inside the Kubernetes c
 
 Connection string (read from environment variables in the web container):
 
-```
+```text
 mongodb://inventario-db:27017/inventario
 ```
 
 <Info>
-  The Kubernetes manifests for the MongoDB deployment — including the `PersistentVolumeClaim` for data durability and the `Service` definition that exposes port 27017 cluster-internally — are located under `k8s/mongodb/` in the repository.
+  When you add Kubernetes manifests for the MongoDB deployment, place them under `k8s/mongodb/`. Include a `PersistentVolumeClaim` for data durability and a `Service` definition that exposes port 27017 cluster-internally. See [Kubernetes deployment](/deployment/kubernetes) for guidance on the overall manifest structure.
 </Info>
