@@ -1,0 +1,62 @@
+---
+title: "InventarioITU: Centralized Lab Equipment Inventory"
+sidebarTitle: "Introduction"
+description: "InventarioITU manages computer lab equipment at ITU Mendoza using a dual-database architecture, LDAP authentication, and containerized Kubernetes deployment."
+---
+
+InventarioITU is a centralized inventory system built to track and manage the computer equipment across the laboratory facilities of ITU Mendoza (Instituto Tecnológico Universitario). Designed for IT administrators and lab coordinators, the system provides a unified web interface for querying where each machine is physically located, who it is assigned to, and what hardware components it contains — all secured behind institutional LDAP authentication and deployed as a fully containerized application on Kubernetes.
+
+## Services Overview
+
+InventarioITU is composed of four cooperating services, each running as its own container inside the Kubernetes cluster. Together they cover the full lifecycle of an inventory request: authentication, location lookup, hardware detail retrieval, and web presentation.
+
+| Service | Description | Port | Technology |
+|---|---|---|---|
+| `inventario-web` | Web application frontend that serves the inventory UI and proxies queries to both databases | 3000 | Node.js + Express |
+| `ubicacion-db` | Relational store for equipment location and assignment records | 1433 | SQL Server |
+| `inventario-db` | Document store for detailed hardware component specifications | 27017 | MongoDB |
+| `ldap-service` | Directory server used for authenticating all user logins | 389 | OpenLDAP |
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/architecture">
+    Understand how the four services connect, how data flows through the system, and how Calico network policies govern inter-pod communication.
+  </Card>
+  <Card title="Core Features" icon="list-check" href="/introduction#core-features">
+    Dual-database design, LDAP-backed authentication, Kubernetes-native deployment, and host-level firewall hardening with GUFW.
+  </Card>
+  <Card title="Database Setup" icon="database" href="/database/sqlserver">
+    Step-by-step instructions for initializing the SQL Server schema and loading the MongoDB hardware document collection before first launch.
+  </Card>
+  <Card title="Deployment" icon="rocket" href="/quickstart">
+    Stand up the full stack locally with Minikube in under 30 minutes, or promote to an on-premise Kubernetes cluster for production use.
+  </Card>
+</CardGroup>
+
+## Core Features
+
+InventarioITU was designed around a set of practical operational requirements for institutional lab management:
+
+- **Dual-database inventory** — Equipment location and assignment data lives in a relational SQL Server schema (suitable for joins across labs, rooms, and assignments), while hardware component details (CPU, RAM, storage, peripherals) are stored as flexible JSON documents in MongoDB.
+- **Institutional authentication** — Every login is validated against an OpenLDAP directory, meaning user accounts are managed centrally alongside other institutional systems and no separate password database is needed.
+- **Container-first deployment** — Every service ships as a Docker image and is orchestrated by Kubernetes, making the system reproducible across developer laptops (Minikube) and production servers alike.
+- **Network isolation with Calico** — Calico CNI enforces NetworkPolicy objects so that, for example, only `inventario-web` can reach the database pods — no direct external access to `ubicacion-db` or `inventario-db` is permitted.
+- **Host firewall hardening** — GUFW (Uncomplicated Firewall with GUI) is configured on the host nodes to provide an additional layer of perimeter defense outside the cluster.
+
+## Technology Stack
+
+| Technology | Role in InventarioITU |
+|---|---|
+| **Node.js + Express** | Powers `inventario-web` — handles HTTP routing, server-side rendering, and proxies queries to both database backends |
+| **SQL Server** | Stores structured location, room, lab, and equipment assignment records in the `ubicacion-db` service |
+| **MongoDB** | Stores hardware component documents (flexible schema) in the `inventario-db` service |
+| **OpenLDAP** | Provides the LDAP directory used to authenticate all web application users via the `ldap-service` |
+| **Docker** | Packages each service as a portable, reproducible container image |
+| **Kubernetes / Minikube** | Orchestrates all containers; Minikube is used for local development and testing |
+| **Calico** | CNI plugin that enforces Kubernetes NetworkPolicies to restrict inter-pod and external traffic |
+| **GUFW** | Host-level firewall management tool used to harden the underlying Linux nodes |
+
+## Project Context
+
+InventarioITU was developed as the **Proyecto Integrador EGI** (Proyecto Integrador de la carrera de Especialización en Gestión Informática) at ITU Mendoza. The project intentionally spans four subject areas — Cloud Computing, Linux Administration, Windows Server, and Databases — to demonstrate integrated competency across the full stack of an enterprise IT environment.
+
+The system reflects real operational needs at ITU Mendoza: multiple computer labs with heterogeneous hardware, a need for accurate asset tracking, and an existing institutional directory that should serve as the single source of truth for user identities. By building on open standards (LDAP, Kubernetes NetworkPolicy) and widely adopted open-source technologies, InventarioITU is designed to be maintainable by future student cohorts and extensible as the institution's needs grow.

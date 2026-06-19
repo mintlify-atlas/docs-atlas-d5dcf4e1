@@ -1,0 +1,105 @@
+---
+title: "Authenticate with LDAP and Active Directory"
+sidebarTitle: "Authentication"
+description: "InventarioITU authenticates all users against OpenLDAP or Active Directory. Learn how credentials flow from the web app through the LDAP service on port 389."
+---
+
+InventarioITU does not manage its own user database. Instead, every login attempt is validated against the institutional directory — either OpenLDAP or a compatible Active Directory server — through the `ldap-service` container running on port 389. This design means user accounts, password policies, and group memberships are controlled centrally by ITU Mendoza's existing IT infrastructure, and the inventory system automatically inherits those controls. The Node.js/Express backend on `inventario-web` acts as the LDAP client: it receives the submitted credentials, performs an LDAP bind, and grants or denies a session based on the directory's response.
+
+## How Authentication Works
+
+<Steps>
+  <Step title="User submits the login form">
+    The user opens `inventario-web` in a browser (port 3000) and enters their ITU username and password. The form POSTs the credentials over HTTPS to the Express `/login` route.
+  </Step>
+  <Step title="Express initiates an LDAP bind">
+    The backend first performs an administrative bind using the service account credentials (`LDAP_BIND_DN` / `LDAP_BIND_PASSWORD`) to search the directory for the user's distinguished name (DN). It then attempts a second bind with the user's own DN and the submitted password.
+  </Step>
+  <Step title="OpenLDAP validates the credentials">
+    The `ldap-service` container (port 389) receives the bind request and checks the provided DN and password against its directory database. It returns either a success response or an `invalidCredentials` error.
+  </Step>
+  <Step title="Session is created or the user is redirected">
+    On a successful bind, the Express backend creates a server-side session, stores the user's DN and group membership, and redirects to the inventory dashboard. On failure, the user is redirected back to `/login` with an error message — no session is written and no internal details are exposed to the browser.
+  </Step>
+</Steps>
+
+## Authentication Flow Diagram
+
+The credential path from browser to directory involves three hops:
+
+| Layer | Service | Port | Action |
+|---|---|---|---|
+| Client | Browser | — | Submits username + password via POST |
+| Frontend | `inventario-web` | 3000 | Receives credentials; issues LDAP bind request |
+| Directory client | `ldap-service` | 389 | Validates bind against OpenLDAP directory |
+| Directory store | OpenLDAP / AD | — | Returns success or `invalidCredentials` |
+
+```
+Browser
+  │  POST /login (username, password)
+  ▼
+inventario-web :3000  (Node.js / Express)
+  │  ldap_bind(userDN, password)
+  ▼
+ldap-service :389  (OpenLDAP)
+  │  directory lookup
+  ▼
+OpenLDAP / Active Directory
+  │  bind success / invalidCredentials
+  └──────────────────────────────────▶  session granted or login redirect
+```
+
+## User Roles
+
+InventarioITU recognises two roles, mapped from LDAP group membership at login time:
+
+<CardGroup cols={2}>
+  <Card title="Admin" icon="shield-check">
+    Members of the `inventario-admins` LDAP group. Can create, edit, and delete equipment records in both SQL Server and MongoDB, manage user assignments, and access all reports.
+  </Card>
+  <Card title="Viewer" icon="eye">
+    All other authenticated users. Can browse the full equipment inventory, search by lab or equipment ID, and view hardware component details — but cannot modify any records.
+  </Card>
+</CardGroup>
+
+Group membership is checked once at login and stored in the session. If a user's group membership changes in LDAP, they must log out and log back in for the new role to take effect.
+
+## LDAP Connection Configuration
+
+The Express backend reads all LDAP connection parameters from environment variables. No connection string or credential should ever appear in source code or in a committed configuration file.
+
+| Variable | Example value | Purpose |
+|---|---|---|
+| `LDAP_URL` | `ldap://ldap-service:389` | Full URL of the LDAP server, including scheme and port |
+| `LDAP_BASE_DN` | `dc=itu,dc=edu,dc=ar` | Base distinguished name under which all user entries are searched |
+| `LDAP_BIND_DN` | `cn=inventario-svc,ou=services,dc=itu,dc=edu,dc=ar` | DN of the service account used for the initial directory search |
+| `LDAP_BIND_PASSWORD` | _(secret)_ | Password for the `LDAP_BIND_DN` service account |
+
+In a Kubernetes deployment these values are injected from a `Secret` object referenced in the `inventario-web` Pod spec. A minimal environment block looks like:
+
+```yaml
+# k8s/frontend/deployment.yaml (excerpt)
+env:
+  - name: LDAP_URL
+    value: "ldap://ldap-service:389"
+  - name: LDAP_BASE_DN
+    value: "dc=itu,dc=edu,dc=ar"
+  - name: LDAP_BIND_DN
+    valueFrom:
+      secretKeyRef:
+        name: ldap-credentials
+        key: bind-dn
+  - name: LDAP_BIND_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: ldap-credentials
+        key: bind-password
+```
+
+<Warning>
+  Never commit `LDAP_BIND_DN` or `LDAP_BIND_PASSWORD` to version control. These credentials grant read access to the entire directory tree. Use a Kubernetes `Secret` (or an external secrets manager) and ensure the `ldap-credentials` secret is created manually on each cluster — it must not be part of any checked-in manifest.
+</Warning>
+
+<Note>
+  For instructions on deploying and configuring the `ldap-service` container itself — including how to seed the initial directory, configure TLS, and set up replication — see the full setup guide at [/operations/ldap-configuration](/operations/ldap-configuration).
+</Note>

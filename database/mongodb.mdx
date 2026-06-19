@@ -1,0 +1,120 @@
+---
+title: "Configure MongoDB for Hardware Component Data"
+sidebarTitle: "MongoDB"
+description: "Set up MongoDB (inventario-db) for InventarioITU to store per-machine hardware component documents. Covers Docker setup, collection init, and connection string configuration."
+---
+
+MongoDB stores the detailed hardware component data for every computer in InventarioITU's inventory. Unlike lab room assignments — which have a fixed, predictable structure — hardware configurations vary significantly from machine to machine: one PC may have two storage drives and 16 GB of RAM, while another has a single SSD and 4 GB. A document database maps naturally onto this variability, allowing each equipment record to carry exactly the fields it needs without requiring nullable columns or separate lookup tables. The service is named `inventario-db` throughout the stack and exposes the standard MongoDB port 27017.
+
+## The `inventario-db` Service
+
+`inventario-db` is a MongoDB 7 instance dedicated to hardware component documents. One document per physical machine is stored in the `componentes` collection, keyed by the same equipment ID used in SQL Server. It is deployed as a Docker container for local development and as a Kubernetes `Deployment` + `Service` in the production cluster.
+
+| Property | Value |
+|---|---|
+| Service name | `inventario-db` |
+| Image | `mongo:7` |
+| Port | `27017` |
+| Default database | `inventario` |
+| Default admin user | `admin` |
+
+<Note>
+  Initialization scripts and seed JSON documents are stored in `db/mongodb/` inside the repository. Review that directory when bootstrapping a new environment or resetting a development instance.
+</Note>
+
+## Run MongoDB Locally with Docker
+
+Start `inventario-db` locally with the following command. It creates an admin user using the provided environment variables and binds port 27017 on the host.
+
+```bash
+docker run -d --name inventario-db \
+  -e MONGO_INITDB_ROOT_USERNAME=admin \
+  -e MONGO_INITDB_ROOT_PASSWORD=YourPassword \
+  -p 27017:27017 \
+  mongo:7
+```
+
+Confirm the container is running and responsive:
+
+```bash
+docker exec -it inventario-db mongosh \
+  --username admin --password YourPassword --authenticationDatabase admin \
+  --eval "db.adminCommand({ ping: 1 })"
+```
+
+A response of `{ ok: 1 }` confirms the server is ready.
+
+## Connection String
+
+Use the following URI format to connect the application to `inventario-db`. When running inside the Kubernetes cluster, replace `localhost` with the service DNS name `inventario-db`.
+
+```text
+mongodb://admin:YourPassword@localhost:27017/inventario?authSource=admin
+```
+
+Connecting from within the cluster:
+
+```text
+mongodb://admin:<MONGO_PASSWORD>@inventario-db:27017/inventario?authSource=admin
+```
+
+The `authSource=admin` parameter tells the driver to authenticate against the `admin` database where the root user was created during initialization.
+
+## Collection Initialization
+
+<Steps>
+  <Step title="Open a mongosh session">
+    Connect to the running container using the MongoDB Shell:
+
+    ```bash
+    docker exec -it inventario-db mongosh \
+      --username admin --password YourPassword --authenticationDatabase admin
+    ```
+  </Step>
+
+  <Step title="Create the collection and insert the first document">
+    Switch to the `inventario` database, create the `componentes` collection, and insert an example equipment document:
+
+    ```js
+    use inventario
+    db.createCollection('componentes')
+    db.componentes.insertOne({
+      _id: 'LAB01-PC-001',
+      ubicacion: 'Laboratorio 1',
+      cpu: { modelo: 'Intel Core i5-8400', nucleos: 6, frecuencia_ghz: 2.8 },
+      ram: { capacidad_gb: 8, tipo: 'DDR4' },
+      almacenamiento: [{ tipo: 'SSD', capacidad_gb: 240 }],
+      estado: 'operativo'
+    })
+    ```
+
+    The `_id` value (`LAB01-PC-001`) matches the primary key in the SQL Server `equipos` table, enabling the application layer to join location data with hardware data for the same machine.
+  </Step>
+
+  <Step title="Verify the document was stored">
+    Query the collection to confirm the insert succeeded:
+
+    ```js
+    db.componentes.findOne({ _id: 'LAB01-PC-001' })
+    ```
+  </Step>
+</Steps>
+
+<Tip>
+  Use the same equipment ID string (e.g. `LAB01-PC-001`) for both the SQL Server `equipos.id` primary key and the MongoDB `componentes._id` field. This single shared key is how `inventario-web` links a machine's physical location and assignment record to its hardware specification without a dedicated cross-database join service.
+</Tip>
+
+## Environment Variables
+
+Configure the following variables in `.env` for local development or in a Kubernetes `Secret` for cluster deployments.
+
+| Variable | Description | Example |
+|---|---|---|
+| `MONGO_URI` | Full MongoDB connection URI | `mongodb://admin:YourPassword@inventario-db:27017/inventario?authSource=admin` |
+| `MONGO_DB_NAME` | Name of the application database within MongoDB | `inventario` |
+
+```bash
+# .env (local development only — do not commit)
+MONGO_URI=mongodb://admin:YourPassword@localhost:27017/inventario?authSource=admin
+MONGO_DB_NAME=inventario
+```

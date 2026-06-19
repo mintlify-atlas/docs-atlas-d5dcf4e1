@@ -1,23 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "InventarioITU",
+  "projectType": "saas",
+  "projectName": "InventarioITU",
+  "projectDescription": "A centralized web application for inventorying computer lab equipment at ITU Mendoza, featuring dual-database storage (SQL Server + MongoDB), LDAP/Active Directory authentication, and containerized Kubernetes deployment.",
   "theme": "aspen",
-  "colors": {
-    "primary": "#2563EB",
-    "light": "#3B82F6",
-    "dark": "#1D4ED8"
-  },
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/carlamndz/InventarioITU"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/carlamndz/InventarioITU"
-    }
-  },
+  "primaryColor": "#2563EB",
+  "lightColor": "#3B82F6",
+  "darkColor": "#1D4ED8",
   "navigation": {
     "tabs": [
       {
@@ -66,5 +54,19 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Centralized computer lab equipment inventory",
+    "Dual-database architecture: SQL Server for location/assignment data, MongoDB for hardware component details",
+    "LDAP/Active Directory authentication via OpenLDAP",
+    "Containerized deployment with Docker and Kubernetes (Minikube + Calico)",
+    "Network policy enforcement with Calico and GUFW firewall",
+    "Web frontend built with Node.js and Express"
+  ],
+  "publicApiSurface": [
+    "inventario-web (port 3000) — Web application frontend",
+    "ubicacion-db (port 1433) — SQL Server for equipment location and assignment",
+    "inventario-db (port 27017) — MongoDB for hardware component data",
+    "ldap-service (port 389) — OpenLDAP authentication server"
+  ]
 }

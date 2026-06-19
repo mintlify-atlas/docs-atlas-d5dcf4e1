@@ -1,47 +1,118 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with InventarioITU"
+sidebarTitle: "Quickstart"
+description: "Stand up the full InventarioITU stack locally using Docker and Minikube in under 30 minutes with step-by-step setup instructions."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+This quickstart walks you through cloning the InventarioITU repository, launching a local Kubernetes cluster with Minikube, deploying all four services — the Node.js web frontend, SQL Server, MongoDB, and OpenLDAP — and verifying that everything is running correctly. By the end you will have a fully functional local instance accessible in your browser, ready for database initialization and LDAP configuration.
 
 ## Prerequisites
 
-Before you begin, you must have:
+Before you begin, make sure the following tools are installed and available on your machine:
 
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
+- **Docker Desktop** (macOS/Windows) or **Docker Engine** (Linux) — used as the Minikube driver and to build container images
+- **Minikube** v1.30 or later — runs the local Kubernetes cluster
+- **kubectl** — Kubernetes command-line tool for applying manifests and inspecting cluster state
+- **Node.js 18+** — required if you intend to run or modify the `inventario-web` application outside of Kubernetes
+- **SQL Server instance** — either the containerized version deployed via the provided manifests or an external instance with network access from the cluster
+- **MongoDB** — either the containerized version from the manifests or an external replica set
+- **OpenLDAP server** — either the `ldap-service` container from the manifests or an existing institutional LDAP/Active Directory endpoint
 
-## Get started
+<Note>
+  All four services are included as Kubernetes manifests under `k8s/`. For a fully self-contained local setup you do not need to provision SQL Server, MongoDB, or OpenLDAP separately — the manifests handle it. External instances are an option for teams that already have these services running.
+</Note>
+
+## Setup Steps
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+  <Step title="Clone the repository">
+    Clone the InventarioITU repository from GitHub and navigate into the project root.
 
     ```bash
-    npm install your-package
+    git clone https://github.com/carlamndz/InventarioITU.git
+    cd InventarioITU
     ```
+
+    The repository contains the following top-level directories: `app/` (the Node.js web application), `db/` (SQL Server scripts and MongoDB init documents), `ldap/` (OpenLDAP configuration), `k8s/` (all Kubernetes manifests), and `docs/` (architecture diagrams and supplementary documentation).
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+  <Step title="Start Minikube">
+    Start a local Kubernetes cluster using Docker as the VM driver. The `--driver=docker` flag avoids the need for a separate hypervisor and works on Linux, macOS, and Windows with Docker Desktop.
 
     ```bash
-    your-cli init
+    minikube start --driver=docker
     ```
+
+    Minikube will download the required Kubernetes components, create a single-node cluster, and configure your local `kubectl` context to point at it. The first run may take a few minutes. Once complete, confirm the cluster is up:
+
+    ```bash
+    kubectl cluster-info
+    ```
+
+    You should see output reporting the Kubernetes control plane and CoreDNS addresses on the Minikube IP.
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+  <Step title="Apply Kubernetes manifests">
+    Deploy all four InventarioITU services by applying the manifests in the `k8s/` directory. The `-f k8s/` flag recursively applies every manifest file found in the directory and its subdirectories, including Deployments, Services, ConfigMaps, PersistentVolumeClaims, and Calico NetworkPolicies.
 
     ```bash
-    your-cli start
+    kubectl apply -f k8s/
     ```
+
+    Kubernetes will create the objects and begin pulling container images. Depending on your internet connection, image pulls may take a few minutes on first run.
+  </Step>
+
+  <Step title="Verify pods are running">
+    Check that all four pods have started successfully and reached the `Running` state.
+
+    ```bash
+    kubectl get pods
+    ```
+
+    Expected output once all services are healthy:
+
+    ```text
+    NAME                              READY   STATUS    RESTARTS   AGE
+    inventario-web-6d4f9b8c7-xk2pq   1/1     Running   0          2m
+    ubicacion-db-0                    1/1     Running   0          2m
+    inventario-db-0                   1/1     Running   0          2m
+    ldap-service-7b85fd946-n9ths      1/1     Running   0          2m
+    ```
+
+    If any pod shows `CrashLoopBackOff` or `ImagePullBackOff`, inspect the logs with `kubectl logs <pod-name>` to diagnose the issue. Common causes are missing secrets (database passwords, LDAP bind credentials) or image pull failures due to registry rate limits.
+  </Step>
+
+  <Step title="Access the web application">
+    Use the `minikube service` command to retrieve the externally accessible URL for the `inventario-web` service and open it in your browser.
+
+    ```bash
+    minikube service inventario-web --url
+    ```
+
+    Minikube will print a URL such as `http://192.168.49.2:30080`. Open that address in your browser to reach the InventarioITU login page. You will need valid LDAP credentials to log in — see the [LDAP Configuration](#next-steps) guide for how to seed the directory with initial user accounts.
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+## Expected `kubectl get pods` Output
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+Once the cluster has finished pulling images and all init containers have completed, running `kubectl get pods` should produce output similar to the following. All pods must show `1/1` under `READY` and `Running` under `STATUS` before the application is usable.
+
+```text
+NAME                              READY   STATUS    RESTARTS   AGE
+inventario-web-6d4f9b8c7-xk2pq   1/1     Running   0          3m
+ubicacion-db-0                    1/1     Running   0          3m
+inventario-db-0                   1/1     Running   0          3m
+ldap-service-7b85fd946-n9ths      1/1     Running   0          3m
+```
+
+<Note>
+  LDAP setup must be completed before the first login attempt. The `ldap-service` pod will start successfully, but without a populated directory the web application cannot authenticate any users. Follow the LDAP Configuration guide to create the base organizational unit structure and add at least one admin user before navigating to the login page.
+</Note>
+
+## Next Steps
+
+With the cluster running, continue with these guides to complete your setup:
+
+- [Architecture](/architecture) — Understand how the four services communicate and how Calico network policies protect inter-pod traffic.
+- [Database Setup](/database/sqlserver) — Initialize the SQL Server schema with lab and equipment tables, and load the MongoDB hardware component documents.
+- [LDAP Configuration](/operations/ldap-configuration) — Populate the OpenLDAP directory with your organizational unit structure and user accounts so that logins work correctly.

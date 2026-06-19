@@ -1,0 +1,126 @@
+---
+title: "Secure Inter-Service Traffic with Network Policies"
+sidebarTitle: "Network Policies"
+description: "Use Calico NetworkPolicies in InventarioITU to restrict pod-to-pod communication. Only the web app can reach the databases and LDAP service."
+---
+
+In a multi-service system like InventarioITU, every pod that Kubernetes schedules can — by default — send traffic to every other pod in the cluster. That default-open posture means a compromised frontend container could directly query the SQL Server port, or a rogue sidecar could exfiltrate MongoDB records, without any network-level obstacle. Kubernetes `NetworkPolicy` objects close this gap by declaring an explicit allowlist of permitted pod-to-pod flows and dropping everything else. InventarioITU uses Calico as its CNI plugin specifically because Calico enforces these policies at the Linux kernel level via eBPF and iptables — something the default Minikube CNI cannot do.
+
+## Calico CNI Setup in Minikube
+
+Calico is installed automatically when Minikube is started with the `--cni=calico` flag (see the [Kubernetes deployment guide](/deployment/kubernetes)). Once running, Calico deploys two key components into the `kube-system` namespace:
+
+- **calico-node** — a DaemonSet pod that runs on every node and programs the kernel's networking rules based on active `NetworkPolicy` objects.
+- **calico-kube-controllers** — a Deployment pod that watches the Kubernetes API for policy changes and keeps Calico's internal datastore in sync.
+
+You can verify both are healthy at any time:
+
+```bash
+kubectl get pods -n kube-system -l k8s-app=calico-node
+kubectl get pods -n kube-system -l k8s-app=calico-kube-controllers
+```
+
+No additional Calico configuration is needed for standard Kubernetes `NetworkPolicy` resources. InventarioITU's policies use only the core `networking.k8s.io/v1` API, so they are portable to any other CNI that enforces the spec (Cilium, Weave, Antrea, etc.).
+
+## Policy Design
+
+The security model is simple: **only `inventario-web` may initiate connections to the backend services**. All other pods — including future workloads added to the cluster — are denied access to the database and LDAP ports. This is enforced by attaching an `Ingress` NetworkPolicy to each backend service and limiting allowed sources to pods labeled `app: inventario-web`.
+
+| Source | Destination | Port | Allowed |
+|---|---|---|---|
+| inventario-web | ubicacion-db | 1433 | ✅ Yes |
+| inventario-web | inventario-db | 27017 | ✅ Yes |
+| inventario-web | ldap-service | 389 | ✅ Yes |
+| Any other pod | ubicacion-db | 1433 | ❌ No |
+| Any other pod | inventario-db | 27017 | ❌ No |
+| Any other pod | ldap-service | 389 | ❌ No |
+
+Once a `NetworkPolicy` with `policyTypes: [Ingress]` is applied to a pod, Kubernetes switches that pod from default-allow to default-deny for inbound traffic. Only the `ingress` rules explicitly listed in the policy are permitted — all other inbound connections are silently dropped.
+
+## Example NetworkPolicy: SQL Server
+
+The following manifest restricts inbound traffic to the `ubicacion-db` (SQL Server) pod. Any pod in the cluster that is **not** labeled `app: inventario-web` will have its connection to port 1433 dropped by Calico before it reaches the SQL Server process.
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web-to-sqlserver
+spec:
+  podSelector:
+    matchLabels:
+      app: ubicacion-db
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: inventario-web
+      ports:
+        - protocol: TCP
+          port: 1433
+```
+
+Apply the same pattern for MongoDB (port 27017, target label `app: inventario-db`) and OpenLDAP (port 389, target label `app: ldap-service`). All three policy manifests live in `k8s/network-policies/` and are applied automatically when you run `kubectl apply -f k8s/`.
+
+## Host-Level Firewall with GUFW
+
+Kubernetes NetworkPolicies govern pod-to-pod traffic inside the cluster. They do not protect the **host node** from external network access. On the Minikube host (and on any bare-metal or VM nodes in a physical cluster), the **GUFW** (Graphical Uncomplicated Firewall) layer provides an additional defense-in-depth boundary.
+
+GUFW is a front-end for `ufw` (Uncomplicated Firewall) on Ubuntu/Debian-based Linux systems. It protects against:
+
+- Direct external connections to database ports that were inadvertently exposed on the host network interface (e.g., via `NodePort` or `hostPort` bindings).
+- Reconnaissance and brute-force attempts against LDAP from outside the local network.
+
+### Recommended Host Firewall Rules
+
+The following `ufw` rules deny inbound connections to the three sensitive ports from any source outside the local cluster subnet. Adjust `<cluster-subnet>` to your Minikube node IP range (typically `192.168.49.0/24`).
+
+```bash
+# Deny inbound SQL Server from outside the cluster
+sudo ufw deny in from any to any port 1433
+
+# Deny inbound MongoDB from outside the cluster
+sudo ufw deny in from any to any port 27017
+
+# Deny inbound LDAP from outside the cluster
+sudo ufw deny in from any to any port 389
+
+# Allow cluster-internal traffic to those ports
+sudo ufw allow in from 192.168.49.0/24 to any port 1433
+sudo ufw allow in from 192.168.49.0/24 to any port 27017
+sudo ufw allow in from 192.168.49.0/24 to any port 389
+
+# Enable the firewall (if not already active)
+sudo ufw enable
+```
+
+Verify the active rules after applying them:
+
+```bash
+sudo ufw status verbose
+```
+
+GUFW's graphical interface (launch with `gufw` from a desktop session) provides the same controls with a visual rule list, which is useful for auditing the firewall state at a glance.
+
+<Warning>
+  Kubernetes `NetworkPolicy` objects have **no effect** unless the active CNI plugin enforces them. The default Minikube CNI (Kindnet) does not enforce network policies — it silently accepts all inter-pod traffic regardless of any `NetworkPolicy` resources you create. Always start Minikube with `--cni=calico` (or another policy-enforcing CNI such as Cilium) when security isolation is required. You can confirm enforcement is active by running the connectivity test described below.
+</Warning>
+
+<Tip>
+  Test that your policies are actually blocking traffic by using `kubectl exec` to open a shell in a pod that should **not** have access, then attempt a connection with `nc` (netcat) or `curl`:
+
+  ```bash
+  # Open a shell in a test pod (or any pod other than inventario-web)
+  kubectl exec -it <some-other-pod> -- sh
+
+  # Try to reach SQL Server — this should hang or refuse
+  nc -zv ubicacion-db 1433
+
+  # Try to reach MongoDB — this should also be blocked
+  nc -zv inventario-db 27017
+  ```
+
+  If `nc` connects successfully from a pod that should be blocked, Calico is either not running correctly or the `NetworkPolicy` labels do not match the pod labels. Run `kubectl describe pod <pod-name>` and confirm the `app` label matches the `podSelector` in your policy.
+</Tip>

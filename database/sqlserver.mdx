@@ -1,0 +1,130 @@
+---
+title: "Configure SQL Server for Equipment Location Data"
+sidebarTitle: "SQL Server"
+description: "Set up SQL Server (ubicacion-db) for InventarioITU to store lab equipment location and assignment records. Covers Docker setup, schema init, and connection configuration."
+---
+
+SQL Server serves as the relational backbone of InventarioITU, storing the structured, normalized data that describes *where* each piece of equipment lives and *who* it is assigned to. Lab room definitions, equipment registration records, and assignment histories all fit naturally into a relational model — rows have predictable shapes, foreign keys enforce referential integrity between labs and machines, and SQL queries make it straightforward to produce audit reports. The service is named `ubicacion-db` throughout the stack and runs on the standard SQL Server port 1433.
+
+## The `ubicacion-db` Service
+
+Within the InventarioITU architecture, `ubicacion-db` is a Microsoft SQL Server 2022 instance responsible exclusively for location and assignment data. It is deployed as a Docker container during local development and as a Kubernetes `Deployment` + `Service` object in the production cluster.
+
+| Property | Value |
+|---|---|
+| Service name | `ubicacion-db` |
+| Image | `mcr.microsoft.com/mssql/server:2022-latest` |
+| Port | `1433` |
+| Default database | `inventario` |
+| Default user | `sa` |
+
+<Note>
+  The SQL initialization scripts and schema migration files live in `db/sqlserver/` inside the repository. Review that directory before applying manual changes to a running instance.
+</Note>
+
+## Run SQL Server Locally with Docker
+
+For local development you can spin up `ubicacion-db` with a single `docker run` command. This starts SQL Server 2022 in a detached container, accepts the EULA, and binds port 1433 on your host machine.
+
+```bash
+docker run -e 'ACCEPT_EULA=Y' -e 'SA_PASSWORD=YourStrong!Passw0rd' \
+  -p 1433:1433 --name ubicacion-db \
+  -d mcr.microsoft.com/mssql/server:2022-latest
+```
+
+After a few seconds the server will be ready to accept connections. You can verify it is healthy by running:
+
+```bash
+docker exec -it ubicacion-db /opt/mssql-tools/bin/sqlcmd \
+  -S localhost -U sa -P 'YourStrong!Passw0rd' -Q "SELECT @@VERSION"
+```
+
+<Warning>
+  Never use `YourStrong!Passw0rd` in a shared, staging, or production environment. Set a unique, high-entropy SA password and rotate it regularly. In Kubernetes, store the password in a `Secret` object — never in a `ConfigMap` or a container environment variable that is committed to source control.
+</Warning>
+
+## Connection String
+
+The application connects to `ubicacion-db` using the following connection string format. Replace the host with the Kubernetes service DNS name (`ubicacion-db`) when running inside the cluster.
+
+```text
+mssql://sa:YourStrong!Passw0rd@localhost:1433/inventario
+```
+
+When connecting from within the Kubernetes cluster the hostname resolves via the internal DNS entry for the `ubicacion-db` Service:
+
+```text
+mssql://sa:<DB_PASSWORD>@ubicacion-db:1433/inventario
+```
+
+## Schema Initialization
+
+<Steps>
+  <Step title="Connect to the SQL Server instance">
+    Use `sqlcmd`, Azure Data Studio, or the SQL Server extension for VS Code to open a session against the running container before executing the schema script.
+
+    ```bash
+    docker exec -it ubicacion-db /opt/mssql-tools/bin/sqlcmd \
+      -S localhost -U sa -P 'YourStrong!Passw0rd'
+    ```
+  </Step>
+
+  <Step title="Create the database and tables">
+    Run the following DDL to create the `inventario` database and its core tables. This script is also available as `db/sqlserver/init.sql` in the repository.
+
+    ```sql
+    CREATE DATABASE inventario;
+    GO
+    USE inventario;
+    GO
+    CREATE TABLE laboratorios (
+      id INT PRIMARY KEY IDENTITY,
+      nombre NVARCHAR(100) NOT NULL,
+      edificio NVARCHAR(100),
+      capacidad INT
+    );
+    CREATE TABLE equipos (
+      id NVARCHAR(20) PRIMARY KEY,
+      nombre NVARCHAR(100),
+      laboratorio_id INT REFERENCES laboratorios(id),
+      asignado_a NVARCHAR(200),
+      estado NVARCHAR(50) DEFAULT 'disponible',
+      fecha_ingreso DATE
+    );
+    ```
+
+    The `equipos.id` column (e.g. `LAB01-PC-001`) is a human-readable composite key that also acts as the cross-database link to MongoDB. See [Data Model](/database/data-model) for details.
+  </Step>
+
+  <Step title="Verify the schema">
+    Confirm both tables were created successfully:
+
+    ```sql
+    USE inventario;
+    GO
+    SELECT TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE';
+    GO
+    ```
+  </Step>
+</Steps>
+
+## Environment Variables
+
+The `inventario-web` application reads the following environment variables to build its SQL Server connection. Set them in your `.env` file for local development or in a Kubernetes `Secret` for cluster deployments.
+
+| Variable | Description | Example |
+|---|---|---|
+| `DB_HOST` | Hostname or IP of the SQL Server instance | `ubicacion-db` |
+| `DB_PORT` | TCP port SQL Server listens on | `1433` |
+| `DB_NAME` | Name of the application database | `inventario` |
+| `DB_USER` | SQL login username | `sa` |
+| `DB_PASSWORD` | Password for the SQL login | `YourStrong!Passw0rd` |
+
+```bash
+# .env (local development only — do not commit)
+DB_HOST=localhost
+DB_PORT=1433
+DB_NAME=inventario
+DB_USER=sa
+DB_PASSWORD=YourStrong!Passw0rd
+```

@@ -1,20 +1,71 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "InventarioITU: Computer Lab Inventory for ITU Mendoza"
+sidebarTitle: "Home"
+description: "Centralized inventory system for ITU Mendoza computer labs. Manage equipment location, hardware components, and user access with SQL Server, MongoDB, LDAP, and Kubernetes."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+InventarioITU is a full-stack web application built for ITU Mendoza to centralize the management of computer lab equipment. It tracks where each machine is located and assigned (via SQL Server), stores detailed hardware component information (via MongoDB), authenticates users against Active Directory through OpenLDAP, and runs as a containerized application on Kubernetes.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get the system running locally or on a cluster in minutes
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture">
+    Understand the services, databases, and network design
+  </Card>
+  <Card title="Deployment" icon="cloud" href="/deployment/kubernetes">
+    Deploy on Kubernetes with Minikube and Calico
+  </Card>
+  <Card title="Database Setup" icon="database" href="/database/sqlserver">
+    Configure SQL Server and MongoDB for inventory data
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## What InventarioITU Does
+
+The system ties together four services that work in concert to provide a complete inventory solution for ITU Mendoza's informatics laboratories.
+
+<CardGroup cols={2}>
+  <Card title="Inventory Management" icon="boxes-stacked" href="/features/inventory-management">
+    Query equipment location and assignment across all labs
+  </Card>
+  <Card title="Authentication" icon="lock" href="/features/authentication">
+    LDAP/Active Directory login for staff and administrators
+  </Card>
+  <Card title="Hardware Components" icon="microchip" href="/features/hardware-components">
+    MongoDB-backed hardware detail records for every machine
+  </Card>
+  <Card title="Network Policies" icon="shield" href="/deployment/network-policies">
+    Calico and GUFW firewall rules for secure inter-service communication
+  </Card>
+</CardGroup>
+
+## System at a Glance
+
+| Service | Role | Port |
+|---|---|---|
+| `inventario-web` | Node.js + Express web frontend | 3000 |
+| `ubicacion-db` | SQL Server — location & assignment data | 1433 |
+| `inventario-db` | MongoDB — hardware component records | 27017 |
+| `ldap-service` | OpenLDAP — user authentication | 389 |
+
+## Get Started
+
+<Steps>
+  <Step title="Review the architecture">
+    Read the [Architecture](/architecture) page to understand how the services connect before setting anything up.
+  </Step>
+  <Step title="Set up the databases">
+    Initialise [SQL Server](/database/sqlserver) and [MongoDB](/database/mongodb) with the provided schemas and seed data.
+  </Step>
+  <Step title="Configure LDAP">
+    Set up [OpenLDAP](/operations/ldap-configuration) with your directory structure and user accounts.
+  </Step>
+  <Step title="Deploy with Kubernetes">
+    Apply the Kubernetes manifests from the `k8s/` directory as described in the [Deployment guide](/deployment/kubernetes).
+  </Step>
+</Steps>
+
+<Note>
+  InventarioITU is designed to run on Minikube for development and on-premise Kubernetes clusters for production. All services are containerized with Docker.
+</Note>

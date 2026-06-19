@@ -1,0 +1,170 @@
+---
+title: "Hardware Component Records with MongoDB"
+sidebarTitle: "Hardware Components"
+description: "InventarioITU stores detailed hardware component data for each computer in MongoDB. Each document captures CPU, RAM, storage, and peripheral details per machine."
+---
+
+While SQL Server tracks _where_ a machine is and _who_ it is assigned to, MongoDB tracks _what that machine is made of_. Each computer in the ITU Mendoza labs has a corresponding document in the `inventario-db` MongoDB database that records its CPU model, RAM configuration, storage devices, and connected peripherals. MongoDB was chosen for this layer because hardware profiles are naturally document-shaped — every machine can have a different number of drives, peripheral types, or custom fields — and a schema-flexible document store avoids the friction of altering relational tables every time a new component type is introduced or a batch of machines arrives with a non-standard configuration.
+
+## Document Structure
+
+Every hardware record is stored as a single MongoDB document whose `_id` matches the corresponding `id` in the SQL Server `equipos` table. This shared key is the bridge between the two databases and allows the web application to assemble a complete equipment profile (location + hardware) in one page without a cross-database join.
+
+```json
+{
+  "_id": "LAB01-PC-042",
+  "ubicacion": "Laboratorio 1",
+  "cpu": {
+    "modelo": "Intel Core i5-8400",
+    "nucleos": 6,
+    "frecuencia_ghz": 2.8
+  },
+  "ram": {
+    "capacidad_gb": 8,
+    "tipo": "DDR4",
+    "frecuencia_mhz": 2666
+  },
+  "almacenamiento": [
+    { "tipo": "SSD", "capacidad_gb": 240 }
+  ],
+  "perifericos": ["monitor", "teclado", "mouse"],
+  "estado": "operativo",
+  "ultima_actualizacion": "2025-01-15"
+}
+```
+
+### Field Reference
+
+| Field | Type | Description |
+|---|---|---|
+| `_id` | String | Unique machine identifier; matches `equipos.id` in SQL Server |
+| `ubicacion` | String | Lab room name (redundant with SQL Server, included for standalone queries) |
+| `cpu.modelo` | String | Full processor model name |
+| `cpu.nucleos` | Number | Physical core count |
+| `cpu.frecuencia_ghz` | Number | Base clock frequency in GHz |
+| `ram.capacidad_gb` | Number | Total installed RAM in gigabytes |
+| `ram.tipo` | String | Memory standard — e.g., `DDR4`, `DDR3` |
+| `ram.frecuencia_mhz` | Number | Memory bus speed in MHz |
+| `almacenamiento` | Array | One object per physical drive: `tipo` (`SSD`/`HDD`) and `capacidad_gb` |
+| `perifericos` | Array | List of attached peripherals — e.g., `"monitor"`, `"teclado"`, `"mouse"` |
+| `estado` | String | Hardware health — `operativo`, `degradado`, or `fuera de servicio` |
+| `ultima_actualizacion` | String (ISO 8601) | Date the document was last modified |
+
+## Querying Hardware Data
+
+The `inventario-db` MongoDB collection supports flexible queries against any field in the document. Below are the most common patterns used by the web application and by administrators running ad-hoc checks.
+
+### Filter by Lab
+
+Retrieve all machines in a specific lab room:
+
+```js
+// Node.js — using the mongodb driver
+const db = client.db('inventario');
+const equipos = db.collection('equipos_hardware');
+
+const labResults = await equipos.find({ ubicacion: 'Laboratorio 1' }).toArray();
+```
+
+### Filter by Component Type or Specification
+
+Find machines with less than 8 GB of RAM (useful for identifying upgrade candidates):
+
+```js
+const lowRam = await equipos.find({
+  'ram.capacidad_gb': { $lt: 8 }
+}).project({ _id: 1, ubicacion: 1, 'ram.capacidad_gb': 1 }).toArray();
+```
+
+Find all machines with at least one HDD (as opposed to SSD-only):
+
+```js
+const hddMachines = await equipos.find({
+  almacenamiento: { $elemMatch: { tipo: 'HDD' } }
+}).toArray();
+```
+
+### Filter by Hardware Status
+
+List every machine currently marked as `degradado` or `fuera de servicio`:
+
+```js
+const needsAttention = await equipos.find({
+  estado: { $in: ['degradado', 'fuera de servicio'] }
+}).project({ _id: 1, ubicacion: 1, estado: 1 }).toArray();
+```
+
+## Updating Records
+
+### Adding a New Machine
+
+When a new computer arrives in a lab, insert a document using the same ID that was assigned to it in SQL Server. Always set `ultima_actualizacion` to the current date so the history stays accurate.
+
+```js
+await equipos.insertOne({
+  _id: 'LAB03-PC-008',
+  ubicacion: 'Laboratorio 3',
+  cpu: { modelo: 'AMD Ryzen 5 5600G', nucleos: 6, frecuencia_ghz: 3.9 },
+  ram: { capacidad_gb: 16, tipo: 'DDR4', frecuencia_mhz: 3200 },
+  almacenamiento: [{ tipo: 'SSD', capacidad_gb: 480 }],
+  perifericos: ['monitor', 'teclado', 'mouse'],
+  estado: 'operativo',
+  ultima_actualizacion: new Date().toISOString().split('T')[0]
+});
+```
+
+### Updating Hardware After an Upgrade
+
+Use `$set` to update individual fields without rewriting the entire document. Always bump `ultima_actualizacion` in the same operation.
+
+```js
+// RAM upgrade on an existing machine
+await equipos.updateOne(
+  { _id: 'LAB01-PC-042' },
+  {
+    $set: {
+      'ram.capacidad_gb': 16,
+      'ultima_actualizacion': new Date().toISOString().split('T')[0]
+    }
+  }
+);
+
+// Add a second drive
+await equipos.updateOne(
+  { _id: 'LAB01-PC-042' },
+  {
+    $push: {
+      almacenamiento: { tipo: 'HDD', capacidad_gb: 1000 }
+    },
+    $set: {
+      'ultima_actualizacion': new Date().toISOString().split('T')[0]
+    }
+  }
+);
+```
+
+<Tip>
+  Always keep the MongoDB `_id` in sync with the `id` column in the SQL Server `equipos` table. The web application uses this shared key to fetch both the location record and the hardware document in a single equipment profile page. If the two values diverge — for example, because a machine was re-labelled in one system but not the other — the profile page will show incomplete data and the cross-database lookup will silently return `null` for the hardware section.
+</Tip>
+
+## MongoDB Service: `inventario-db`
+
+The MongoDB instance runs as the `inventario-db` service inside the Kubernetes cluster and is accessible on **port 27017** via the cluster-internal DNS name.
+
+| Setting | Value |
+|---|---|
+| Service name | `inventario-db` |
+| Port | `27017` |
+| Database name | `inventario` |
+| Primary collection | `equipos_hardware` |
+| Driver (Node.js) | `mongodb` (official driver) |
+
+Connection string (read from environment variables in the web container):
+
+```
+mongodb://inventario-db:27017/inventario
+```
+
+<Info>
+  The Kubernetes manifests for the MongoDB deployment — including the `PersistentVolumeClaim` for data durability and the `Service` definition that exposes port 27017 cluster-internally — are located under `k8s/mongodb/` in the repository.
+</Info>

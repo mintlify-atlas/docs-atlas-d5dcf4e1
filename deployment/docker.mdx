@@ -1,0 +1,143 @@
+---
+title: "Containerize InventarioITU with Docker"
+sidebarTitle: "Docker"
+description: "Build and run all InventarioITU services as Docker containers. Covers Dockerfile structure, image builds, and docker-compose setup for local development."
+---
+
+Docker is the containerization backbone of InventarioITU. Every service in the stack — the Node.js web frontend, the SQL Server database for location and assignment data, the MongoDB database for hardware component records, and the OpenLDAP authentication server — runs as an isolated container. This approach ensures consistent behavior across development machines and production infrastructure, eliminates dependency conflicts, and makes the entire system reproducible with a single command.
+
+## Services Overview
+
+InventarioITU is composed of four containers, each with a distinct responsibility:
+
+<CardGroup cols={2}>
+  <Card title="inventario-web" icon="globe">
+    The Node.js + Express web application. Serves the inventory UI on port **3000** and connects outward to all three backend services.
+  </Card>
+  <Card title="ubicacion-db" icon="database">
+    A Microsoft SQL Server 2022 instance on port **1433**. Stores relational data about lab locations and equipment assignments.
+  </Card>
+  <Card title="inventario-db" icon="leaf">
+    A MongoDB 7 instance on port **27017**. Stores flexible hardware component documents for each inventoried machine.
+  </Card>
+  <Card title="ldap-service" icon="lock">
+    An OpenLDAP server on port **389**. Provides centralized authentication for ITU Mendoza staff accessing the system.
+  </Card>
+</CardGroup>
+
+## Dockerfile for the Web Application
+
+The `inventario-web` image is built from the `app/` directory at the root of the repository. It uses the lightweight `node:18-alpine` base image to keep the final image size small and the attack surface minimal. Production dependencies are installed with `npm ci --only=production` to guarantee a reproducible install from the lockfile.
+
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3000
+CMD ["node", "server.js"]
+```
+
+Place this `Dockerfile` inside the `app/` directory. The `COPY package*.json ./` layer is intentionally separated from `COPY . .` so that Docker can cache the dependency installation step and avoid re-running `npm ci` on every source code change.
+
+## docker-compose.yml
+
+For local development, `docker-compose` brings up the complete four-service stack in a single step. All services join a dedicated bridge network (`inventario-net`) so they can reach each other by service name — the web app connects to `ubicacion-db`, `inventario-db`, and `ldap-service` directly without needing IP addresses.
+
+```yaml
+version: '3.8'
+services:
+  inventario-web:
+    build: ./app
+    ports:
+      - '3000:3000'
+    environment:
+      - DB_HOST=ubicacion-db
+      - DB_PORT=1433
+      - MONGO_URI=mongodb://admin:password@inventario-db:27017/inventario
+      - LDAP_URL=ldap://ldap-service:389
+    depends_on:
+      - ubicacion-db
+      - inventario-db
+      - ldap-service
+    networks:
+      - inventario-net
+  ubicacion-db:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      - ACCEPT_EULA=Y
+      - SA_PASSWORD=YourStrong!Passw0rd
+    ports:
+      - '1433:1433'
+    networks:
+      - inventario-net
+  inventario-db:
+    image: mongo:7
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=YourPassword
+    ports:
+      - '27017:27017'
+    networks:
+      - inventario-net
+  ldap-service:
+    image: osixia/openldap:1.5.0
+    environment:
+      - LDAP_ORGANISATION=ITU Mendoza
+      - LDAP_DOMAIN=itu.edu.ar
+    ports:
+      - '389:389'
+    networks:
+      - inventario-net
+networks:
+  inventario-net:
+```
+
+The `depends_on` block on `inventario-web` ensures Docker starts the three backend containers before the web process, though it does not wait for the services inside them to be fully ready. If SQL Server or MongoDB takes a few seconds to initialize, the web app should implement retry logic on its database connection.
+
+## Building and Running
+
+### Build the web image
+
+From the repository root, build the `inventario-web` image explicitly before composing:
+
+```bash
+docker build -t inventario-web:latest ./app
+```
+
+### Start the full stack
+
+```bash
+docker compose up --build
+```
+
+The `--build` flag ensures the web image is rebuilt from the current source even if a cached layer exists. On first run, Docker pulls the SQL Server, MongoDB, and OpenLDAP images from their respective registries.
+
+### Run in the background
+
+```bash
+docker compose up -d
+```
+
+### Tail logs for a specific service
+
+```bash
+docker compose logs -f inventario-web
+```
+
+### Stop and remove containers
+
+```bash
+docker compose down
+```
+
+To also remove the named volumes (all database data), add the `-v` flag:
+
+```bash
+docker compose down -v
+```
+
+<Warning>
+  Never commit real passwords or credentials into `docker-compose.yml` or any Dockerfile. The values shown above (`YourStrong!Passw0rd`, `YourPassword`) are placeholders for local development only. In staging and production environments, supply secrets through **Docker secrets**, a `.env` file excluded from version control via `.gitignore`, or a secrets manager such as HashiCorp Vault. Leaking database credentials in a public repository is a critical security vulnerability.
+</Warning>

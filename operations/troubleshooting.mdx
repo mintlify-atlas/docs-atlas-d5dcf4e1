@@ -1,0 +1,235 @@
+---
+title: "Troubleshoot Common InventarioITU Issues"
+sidebarTitle: "Troubleshooting"
+description: "Diagnose and fix common issues in InventarioITU: pods not starting, database connection failures, LDAP authentication errors, and network policy problems."
+---
+
+When something goes wrong in InventarioITU, the fastest path to a fix is to isolate the failure to a single layer — Kubernetes scheduling, container runtime, database connectivity, LDAP authentication, or network policy. Start with `kubectl get pods` to get a high-level view of the cluster state, then drill into the specific service that is misbehaving using the targeted commands below. Each accordion section describes a distinct failure mode, its likely causes, and the exact commands needed to confirm and resolve it.
+
+<Accordion title="Pods stuck in Pending or CrashLoopBackOff">
+A pod stuck in `Pending` has not been scheduled onto a node yet. A pod in `CrashLoopBackOff` started but its main process exited with an error, and Kubernetes is retrying with an exponential back-off.
+
+**Step 1 — Describe the pod** to see scheduling events and failure reasons:
+
+```bash
+kubectl describe pod <pod-name>
+```
+
+Look at the `Events` section at the bottom of the output. Common messages and their causes:
+
+- `Unschedulable: 0/1 nodes are available` — the cluster has no node with sufficient CPU or memory. Check resource requests in the Deployment manifest.
+- `PersistentVolumeClaim is not bound` — the PersistentVolumeClaim referenced by the pod does not have a matching PersistentVolume. Verify with `kubectl get pvc` and `kubectl get pv`.
+- `Back-off pulling image` — the image name or tag is wrong, or the registry is unreachable. Double-check the `image:` field in the manifest.
+
+**Step 2 — Read the container logs** to understand why the process crashed:
+
+```bash
+kubectl logs <pod-name>
+```
+
+If the pod has already restarted, fetch logs from the previous run:
+
+```bash
+kubectl logs <pod-name> --previous
+```
+
+**Common fixes:**
+
+- Increase the node's available resources or lower the container's `resources.requests` values.
+- Create the missing PersistentVolume or resize the storage class.
+- Correct the image name and re-apply the manifest with `kubectl apply -f`.
+</Accordion>
+
+<Accordion title="Cannot connect to SQL Server (ubicacion-db)">
+The `ubicacion-db` pod runs SQL Server and stores all location and equipment assignment data. Connection failures from `inventario-web` to `ubicacion-db` on port 1433 typically point to one of three causes: the pod is not running, the Kubernetes Service is misconfigured, or the SA password does not meet SQL Server's complexity requirements.
+
+**Step 1 — Confirm the pod is running:**
+
+```bash
+kubectl get pods -l app=ubicacion-db
+```
+
+The `STATUS` column must show `Running` and `READY` must be `1/1`. If the pod is in `CrashLoopBackOff`, check the logs — SQL Server will refuse to start if `SA_PASSWORD` is shorter than 8 characters or does not contain a mix of uppercase, lowercase, digits, and symbols.
+
+**Step 2 — Check the Kubernetes Service:**
+
+```bash
+kubectl get svc ubicacion-db
+```
+
+Verify that the `PORT(S)` column shows `1433` and that `SELECTOR` matches the label `app=ubicacion-db`.
+
+**Step 3 — Test the TCP port from the web pod:**
+
+```bash
+kubectl exec -it <web-pod> -- nc -zv ubicacion-db 1433
+```
+
+A response of `Connection to ubicacion-db 1433 port [tcp/*] succeeded!` confirms that the network path is open. If the connection is refused or times out, check the Calico NetworkPolicy in `k8s/network-policies/` to ensure traffic from `inventario-web` to `ubicacion-db` on port 1433 is permitted.
+
+**Common fix — SA_PASSWORD complexity:**
+
+SQL Server requires a password of at least 8 characters containing uppercase letters, lowercase letters, digits, and special characters. Update the password in your Kubernetes Secret and restart the pod:
+
+```bash
+kubectl delete pod -l app=ubicacion-db
+```
+</Accordion>
+
+<Accordion title="Cannot connect to MongoDB (inventario-db)">
+MongoDB stores the hardware component records for each inventoried machine. The `inventario-db` pod must be reachable from `inventario-web` on port 27017.
+
+**Step 1 — Verify the pod is running:**
+
+```bash
+kubectl get pods -l app=inventario-db
+```
+
+**Step 2 — Test TCP connectivity from the web pod:**
+
+```bash
+kubectl exec -it <web-pod> -- nc -zv inventario-db 27017
+```
+
+**Step 3 — Verify the connection string in the web app:**
+
+The `inventario-web` container connects to MongoDB via the `MONGO_URI` environment variable. Its value must follow this pattern:
+
+```
+mongodb://inventario-db:27017/inventario
+```
+
+If authentication is enabled on the MongoDB instance, the URI must include credentials:
+
+```
+mongodb://<user>:<password>@inventario-db:27017/inventario?authSource=admin
+```
+
+Check the current value in the running pod:
+
+```bash
+kubectl exec -it <web-pod> -- printenv MONGO_URI
+```
+
+**Common fix:** If `MONGO_URI` is missing or points to the wrong host, update the Kubernetes Secret or ConfigMap that supplies it, then restart the web pod with `kubectl rollout restart deployment inventario-web`.
+</Accordion>
+
+<Accordion title="LDAP authentication failures">
+Authentication failures manifest as login errors in the `inventario-web` UI or as bind errors in the application logs. The most frequent causes are an incorrect bind DN, a wrong password, or a mismatch between `LDAP_USER_SEARCH_BASE` and the actual directory structure.
+
+**Step 1 — Check the application logs for the LDAP error code:**
+
+```bash
+kubectl logs <web-pod> | grep -i ldap
+```
+
+LDAP error code `49` means invalid credentials (wrong bind DN or password). Error code `32` means the search base DN does not exist in the directory.
+
+**Step 2 — Test the bind manually from within the web pod:**
+
+```bash
+kubectl exec -it <web-pod> -- \
+  ldapsearch -x \
+    -H ldap://ldap-service:389 \
+    -D "cn=admin,dc=itu,dc=edu,dc=ar" \
+    -w "$LDAP_BIND_PASSWORD" \
+    -b "ou=usuarios,dc=itu,dc=edu,dc=ar" "(uid=jdoe)"
+```
+
+**Step 3 — Verify all LDAP environment variables are set correctly:**
+
+```bash
+kubectl exec -it <web-pod> -- printenv | grep LDAP
+```
+
+Confirm that:
+- `LDAP_BIND_DN` matches the exact DN of the admin account in the directory (e.g., `cn=admin,dc=itu,dc=edu,dc=ar`).
+- `LDAP_USER_SEARCH_BASE` is set to `ou=usuarios,dc=itu,dc=edu,dc=ar` — this must match the OU where user entries are stored.
+- `LDAP_BASE_DN` is `dc=itu,dc=edu,dc=ar`.
+
+**Common fix:** If the `ou=usuarios` organizational unit was never created, no user searches will succeed. Add the OU via an LDIF file and `ldapadd` before attempting any logins.
+</Accordion>
+
+<Accordion title="Network policy blocking expected traffic">
+Calico NetworkPolicies restrict which pods can communicate with which services. A misconfigured policy can silently drop traffic that should be allowed, causing connection timeouts that look like application bugs.
+
+**Step 1 — Confirm Calico is installed and its pods are healthy:**
+
+```bash
+kubectl get pods -n kube-system | grep calico
+```
+
+All `calico-node` and `calico-kube-controllers` pods must be in `Running` state. If any Calico pod is crashing, network policies will not be enforced consistently and you may see intermittent connectivity.
+
+**Step 2 — List all active network policies:**
+
+```bash
+kubectl get networkpolicies
+```
+
+Review each policy with `kubectl describe networkpolicy <name>` to understand its `podSelector`, `ingress`, and `egress` rules.
+
+**Step 3 — Isolate whether a policy is the cause:**
+
+Temporarily delete a suspected policy to test if connectivity is restored:
+
+```bash
+kubectl delete networkpolicy <name>
+```
+
+If the connection succeeds after deletion, the removed policy was too restrictive. Update its rules to permit the required traffic and re-apply it with `kubectl apply -f`. Never leave policies deleted in a production environment — restore the file immediately after your test.
+
+**Common fix:** A NetworkPolicy that selects `inventario-web` pods must include explicit ingress rules allowing traffic from `inventario-db` and `ubicacion-db` on their respective ports, and the policies on those database pods must include corresponding egress/ingress rules permitting traffic from the web pod's label selector.
+</Accordion>
+
+<Accordion title="Minikube service not accessible from the host">
+When running InventarioITU locally with Minikube, the `inventario-web` service may not be reachable at `localhost:3000` because Minikube runs in its own VM or container network.
+
+**Step 1 — Get the correct access URL:**
+
+```bash
+minikube service inventario-web --url
+```
+
+This command returns the host IP and NodePort assigned by Minikube. Open that URL in a browser to reach the web frontend.
+
+**Step 2 — Verify the NodePort is in the valid range:**
+
+Kubernetes NodePort services must use a port in the range **30000–32767**. Check the assigned port:
+
+```bash
+kubectl get svc inventario-web
+```
+
+If the port is outside this range, it was likely specified incorrectly in the Service manifest. Update the `nodePort` field and re-apply.
+
+**Step 3 — Check for a LoadBalancer type requiring a tunnel:**
+
+If the Service type is `LoadBalancer` rather than `NodePort`, the external IP will remain in `<pending>` state on Minikube unless a tunnel is running. Start the tunnel in a separate terminal:
+
+```bash
+minikube tunnel
+```
+
+Leave the tunnel process running for the duration of your session. The service will then become accessible at `127.0.0.1:3000`.
+</Accordion>
+
+## Diagnostic Commands Reference
+
+<Note>
+The commands in the table below cover the most common diagnostic tasks across all layers of the InventarioITU stack. Keep this table handy when working through any of the issues described above.
+</Note>
+
+| Task | Command |
+|---|---|
+| View pod logs | `kubectl logs <pod-name>` |
+| View previous pod logs | `kubectl logs <pod-name> --previous` |
+| Describe pod | `kubectl describe pod <pod-name>` |
+| List all pods with status | `kubectl get pods -o wide` |
+| Test TCP port reachability | `nc -zv <host> <port>` |
+| LDAP directory search | `ldapsearch -x -H ldap://<host>:389 -D "<bind-dn>" -w <password> -b "<base-dn>" "<filter>"` |
+| MongoDB shell | `mongosh mongodb://<host>:27017` |
+| SQL Server CLI | `sqlcmd -S <host> -U sa -P <password>` |
+| Restart a deployment | `kubectl rollout restart deployment <name>` |
+| List network policies | `kubectl get networkpolicies` |
+| Get Minikube service URL | `minikube service <name> --url` |

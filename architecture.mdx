@@ -1,0 +1,83 @@
+---
+title: "InventarioITU System Architecture Overview"
+sidebarTitle: "Architecture"
+description: "InventarioITU connects four containerized services: a Node.js web app, SQL Server, MongoDB, and OpenLDAP, orchestrated on Kubernetes with Calico network policies."
+---
+
+InventarioITU is built as a set of four cooperating containerized services running inside a Kubernetes cluster. The Node.js web application acts as the single entry point for all browser traffic, delegating authentication requests to OpenLDAP and database queries to whichever backend holds the relevant data — SQL Server for structured location and assignment records, MongoDB for flexible hardware component documents. Calico serves as the cluster's CNI plugin and enforces NetworkPolicy rules that strictly limit which pods can talk to which, so that the database services are never reachable directly from outside the cluster.
+
+## Service Table
+
+Each service runs as its own Kubernetes Deployment or StatefulSet with a corresponding Service object that exposes it on a stable cluster-internal DNS name.
+
+| Service | Description | Port | Technology |
+|---|---|---|---|
+| `inventario-web` | Web application frontend — serves the inventory UI, handles session management, and queries both databases on behalf of the logged-in user | 3000 | Node.js + Express |
+| `ubicacion-db` | Relational database storing equipment location records, lab room assignments, and asset-to-user mappings | 1433 | SQL Server |
+| `inventario-db` | Document database storing per-device hardware component specifications as flexible JSON documents | 27017 | MongoDB |
+| `ldap-service` | LDAP directory server used to authenticate all user login requests from the web application | 389 | OpenLDAP |
+
+## Repository Structure
+
+The repository is organized so that each concern — application code, database initialization, LDAP configuration, and Kubernetes manifests — has its own top-level directory. This makes it straightforward to work on a single layer of the stack without touching the others.
+
+```text
+InventarioITU/
+├── app/              # Node.js + Express web application
+├── db/
+│   ├── sqlserver/    # SQL scripts and relational model
+│   └── mongodb/      # JSON documents and init scripts
+├── ldap/             # OpenLDAP configuration
+├── k8s/
+│   ├── frontend/     # Web app Kubernetes manifests
+│   ├── sqlserver/    # SQL Server manifests
+│   ├── mongodb/      # MongoDB manifests
+│   ├── ldap/         # LDAP manifests
+│   └── network-policies/ # Calico network policies
+└── docs/             # Diagrams and documentation
+```
+
+The `k8s/` subdirectories map one-to-one onto services, so all Deployments, Services, ConfigMaps, Secrets, and PersistentVolumeClaims for a given service live together. The `k8s/network-policies/` directory is intentionally separate because its manifests govern relationships *between* services rather than belonging to any single one.
+
+## Data Flow
+
+Every user interaction follows a consistent path through the system. Understanding this flow is important for troubleshooting connectivity issues and for reasoning about where to enforce security controls.
+
+1. **Browser → `inventario-web`** — The user's browser sends all HTTP requests to `inventario-web` on port 3000. This is the only service exposed outside the cluster (via a Kubernetes NodePort or LoadBalancer Service). No other service accepts inbound traffic from outside the cluster boundary.
+
+2. **`inventario-web` → `ldap-service`** — On every login attempt, `inventario-web` performs an LDAP bind against `ldap-service` on port 389 to verify the user's credentials. If the bind fails, the session is rejected before any database query is made.
+
+3. **`inventario-web` → `ubicacion-db`** — Once a session is established, location and assignment queries (e.g., "which lab is this machine in?", "who is this asset assigned to?") are issued as SQL queries against `ubicacion-db` on port 1433.
+
+4. **`inventario-web` → `inventario-db`** — Hardware detail queries (e.g., "what CPU, RAM, and storage does this machine have?") are issued as MongoDB queries against `inventario-db` on port 27017. Because hardware specifications are heterogeneous across machine models, the document model allows each record to carry exactly the fields relevant to its hardware generation.
+
+5. **`inventario-web` → Browser** — The web application assembles the results from both databases into a single rendered response and returns it to the browser.
+
+The two database backends are queried independently and their results are merged at the application layer. This means a failure in one database (for example, `inventario-db` becoming temporarily unavailable) degrades the application gracefully rather than taking down the entire service.
+
+## Networking
+
+InventarioITU's networking design has three layers, each providing isolation at a different level of the stack.
+
+### Kubernetes Cluster with Calico CNI
+
+Calico is installed as the cluster's Container Network Interface (CNI) plugin in place of the default Minikube networking. Calico implements the Kubernetes `NetworkPolicy` API, which means access control between pods is declared as Kubernetes objects (stored in `k8s/network-policies/`) and enforced at the kernel level using eBPF or iptables rules generated by the Calico agent on each node.
+
+The NetworkPolicy objects enforce the following rules:
+
+- `ubicacion-db` and `inventario-db` accept inbound connections **only** from `inventario-web`. Any attempt by an external process or another pod to connect to the database ports is silently dropped.
+- `ldap-service` accepts inbound connections **only** from `inventario-web`.
+- `inventario-web` accepts inbound connections from the Kubernetes ingress or NodePort mechanism — i.e., from outside the cluster — on port 3000 only.
+- All egress from database and LDAP pods is restricted to DNS resolution and responses to established connections.
+
+### Host Firewall with GUFW
+
+On the Linux host nodes running the Minikube virtual machine or the production Kubernetes workers, GUFW (the Uncomplicated Firewall with a graphical management interface) is configured to restrict which ports are reachable from the local network. This provides a defense-in-depth layer outside the Kubernetes control plane: even if a NetworkPolicy were misconfigured, the host firewall prevents direct port access to SQL Server (1433), MongoDB (27017), or LDAP (389) from outside the host machine.
+
+### Service Discovery
+
+Within the cluster, all inter-service communication uses Kubernetes DNS names (e.g., `ubicacion-db.default.svc.cluster.local`) rather than hard-coded IP addresses. This makes the configuration portable across environments — the same manifests work on a developer's Minikube cluster and on a production Kubernetes cluster without any IP address changes.
+
+<Note>
+  InventarioITU is designed for **Minikube in development** environments and for **on-premise Kubernetes clusters** in production. It does not assume managed cloud services (no AWS RDS, Azure Cosmos DB, etc.) — all persistence is handled by containerized databases with PersistentVolumeClaims backed by local storage. This makes the system fully self-hostable on the ITU Mendoza server infrastructure without cloud dependencies.
+</Note>

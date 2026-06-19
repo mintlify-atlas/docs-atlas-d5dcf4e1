@@ -1,0 +1,107 @@
+---
+title: "Equipment Inventory Management in ITU Labs"
+sidebarTitle: "Inventory Management"
+description: "Track computer lab equipment location and assignment across ITU Mendoza with SQL Server-backed queries, room-level granularity, and a Node.js web interface."
+---
+
+InventarioITU gives administrators and staff a single, authoritative view of every computer across ITU Mendoza's labs. The inventory management module records where each piece of equipment lives, who or what it is assigned to, and what operational state it is in — all stored in SQL Server and surfaced through the Node.js/Express web interface on `inventario-web` (port 3000). This means you can answer questions like "which machines in Lab 3 are currently unassigned?" or "what is the status of equipment ITU-0142?" without walking the building.
+
+## What Data Is Tracked
+
+Every equipment record captures the following fields:
+
+| Field | Description |
+|---|---|
+| **ID de equipo** | Unique identifier that ties this record to its hardware document in MongoDB (e.g., `LAB01-PC-042`) |
+| **Nombre** | Human-readable label for the machine (e.g., `PC-042 Lab 1 Puesto 12`) |
+| **Laboratorio** | The lab building or wing where the equipment resides (e.g., `Laboratorio 1`) |
+| **Ubicación** | Room-level detail within the lab — row, bench, or workstation number |
+| **Asignado a** | Person, course, or administrative purpose the machine is currently allocated to |
+| **Estado** | Operational lifecycle state (see the status table below) |
+
+Having both `laboratorio` and `ubicacion` as separate fields allows queries at two granularities: broad lab-level reporting for facility planning and precise seat-level tracking for day-to-day operations.
+
+## Equipment States
+
+Equipment moves through a defined lifecycle. The four states tracked in `ubicacion-db` are:
+
+| State | Spanish Label | Meaning |
+|---|---|---|
+| Available | **Disponible** | Machine is in service and not currently allocated to any person or course |
+| Assigned | **Asignado** | Allocated to a specific person, course section, or administrative role |
+| Under maintenance | **En mantenimiento** | Temporarily offline for repairs, upgrades, or diagnostics |
+| Decommissioned | **Dado de baja** | Retired from service; kept in the database for audit history |
+
+<Tip>
+  Keep assignments up to date whenever equipment changes hands. Stale `Asignado` records cause availability reports to under-count free machines, which can lead to unnecessary purchase requests.
+</Tip>
+
+## Querying Equipment
+
+The web interface exposes three primary ways to find equipment records.
+
+### Browse by Lab Room
+
+The default inventory view groups machines by `laboratorio` and then by `ubicacion`. Select a lab from the sidebar to see all workstations in that room, their current assignees, and their states at a glance.
+
+### Search by Equipment ID
+
+Use the search bar at the top of the inventory page to look up a specific machine by its ID. The query runs directly against the `equipos` table in SQL Server, so results are always current.
+
+```sql
+-- Example: look up a single machine by ID
+SELECT id, nombre, ubicacion, laboratorio, asignado_a, estado
+FROM equipos
+WHERE id = 'LAB01-PC-042';
+```
+
+### Filter by Assignment Status
+
+Use the **Estado** filter dropdown to narrow the list to a single lifecycle state. For example, selecting `Disponible` instantly shows every unallocated machine across all labs — useful before assigning equipment to a new intake of students.
+
+```sql
+-- Example: all available machines in Lab 2
+SELECT id, nombre, ubicacion, asignado_a
+FROM equipos
+WHERE laboratorio = 'Laboratorio 2'
+  AND estado = 'Disponible'
+ORDER BY ubicacion;
+```
+
+## Data Source: SQL Server (`ubicacion-db`)
+
+Location and assignment data lives in the `ubicacion-db` SQL Server instance, which is reachable inside the cluster on **port 1433**. The `inventario-web` backend connects to it using the credentials provided via environment variables at container startup.
+
+The core table schema is:
+
+```sql
+-- Core equipment location and assignment table
+CREATE TABLE equipos (
+    id            VARCHAR(50)   PRIMARY KEY,        -- matches MongoDB _id
+    nombre        VARCHAR(100)  NOT NULL,
+    ubicacion     VARCHAR(100)  NOT NULL,            -- seat/bench identifier
+    laboratorio   VARCHAR(100)  NOT NULL,            -- lab room name
+    asignado_a    VARCHAR(150)  NULL,                -- person or purpose; NULL = available
+    estado        VARCHAR(30)   NOT NULL             -- Disponible | Asignado | En mantenimiento | Dado de baja
+        CONSTRAINT chk_estado CHECK (estado IN (
+            'Disponible', 'Asignado', 'En mantenimiento', 'Dado de baja'
+        )),
+    created_at    DATETIME      NOT NULL DEFAULT GETDATE(),
+    updated_at    DATETIME      NOT NULL DEFAULT GETDATE()
+);
+```
+
+<Note>
+  The `id` column in `equipos` is intentionally kept in sync with the `_id` field in the corresponding MongoDB hardware document. This shared key lets the web app join location data from SQL Server with hardware component data from MongoDB in a single page render without a foreign-key constraint spanning two database engines.
+</Note>
+
+### Connection Details
+
+| Setting | Value |
+|---|---|
+| Service name | `ubicacion-db` |
+| Port | `1433` |
+| Protocol | TDS (SQL Server native) |
+| Driver (Node.js) | `mssql` / `tedious` |
+
+The backend reads the connection string from environment variables so that credentials never appear in source code. Refer to the deployment manifests under `k8s/sqlserver/` for the Kubernetes `Secret` and `ConfigMap` definitions.

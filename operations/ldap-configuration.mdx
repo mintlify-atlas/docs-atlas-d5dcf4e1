@@ -1,0 +1,135 @@
+---
+title: "Configure OpenLDAP for InventarioITU Authentication"
+sidebarTitle: "LDAP Configuration"
+description: "Set up OpenLDAP as the authentication backend for InventarioITU. Configure the directory tree, add user accounts, and connect the Node.js app via environment variables."
+---
+
+OpenLDAP provides centralized authentication for InventarioITU, acting as the single source of truth for user identities across all lab environments at ITU Mendoza. It runs as the `ldap-service` container and listens on port **389**, allowing the `inventario-web` Node.js application to validate credentials at login time. Every user who accesses the inventory system — whether a lab administrator or teaching staff — must have a valid entry in the OpenLDAP directory.
+
+## Deploy the OpenLDAP Container
+
+The recommended way to run OpenLDAP for InventarioITU is with the `osixia/openldap` image. The following command bootstraps the server with the ITU Mendoza organization and the `itu.edu.ar` domain:
+
+```bash
+docker run -d \
+  --name ldap-service \
+  -p 389:389 \
+  -e LDAP_ORGANISATION="ITU Mendoza" \
+  -e LDAP_DOMAIN="itu.edu.ar" \
+  -e LDAP_ADMIN_PASSWORD="admin_password" \
+  osixia/openldap:1.5.0
+```
+
+<Warning>
+Replace `admin_password` with a strong, randomly generated secret before deploying to any shared or production environment. Store it in a Kubernetes Secret or a secrets manager — never hard-code it in a Dockerfile or commit it to version control.
+</Warning>
+
+Once the container is running you can confirm it is healthy with:
+
+```bash
+docker ps --filter name=ldap-service
+```
+
+## Directory Information Tree (DIT)
+
+InventarioITU organizes LDAP entries under two organizational units: `ou=usuarios` for individual user accounts and `ou=grupos` for role-based groups. This structure maps directly to the access levels enforced by the web application.
+
+```
+dc=itu,dc=edu,dc=ar
+├── ou=usuarios
+│   ├── uid=admin
+│   └── uid=jdoe
+└── ou=grupos
+    ├── cn=administradores
+    └── cn=docentes
+```
+
+Members of `cn=administradores` have full read/write access to inventory records, while members of `cn=docentes` can view equipment assignments but cannot modify them. Create both OUs before adding any user entries.
+
+<Note>
+The `ldap/` directory in the InventarioITU repository contains configuration templates (LDIF files and schema definitions) that you can use as a starting point. Apply them with `ldapadd` after the container is running.
+</Note>
+
+## Add a User Account
+
+User entries follow the `inetOrgPerson` and `posixAccount` object classes. Save the snippet below as `jdoe.ldif` and apply it with `ldapadd`:
+
+```ldif
+dn: uid=jdoe,ou=usuarios,dc=itu,dc=edu,dc=ar
+objectClass: inetOrgPerson
+objectClass: posixAccount
+uid: jdoe
+cn: Juan Doe
+sn: Doe
+mail: jdoe@itu.edu.ar
+userPassword: {SSHA}hashedpassword
+uidNumber: 1001
+gidNumber: 1001
+homeDirectory: /home/jdoe
+```
+
+Apply the entry against the running container:
+
+```bash
+ldapadd -x \
+  -H ldap://localhost:389 \
+  -D "cn=admin,dc=itu,dc=edu,dc=ar" \
+  -w admin_password \
+  -f jdoe.ldif
+```
+
+Generate a proper `{SSHA}` password hash before setting `userPassword`:
+
+```bash
+docker exec ldap-service slappasswd -s "the_users_password"
+```
+
+## Connect inventario-web to LDAP
+
+The Node.js application reads its LDAP configuration exclusively from environment variables. Set the following variables in your Docker Compose file, Kubernetes Secret, or `.env` file before starting `inventario-web`:
+
+| Variable | Example Value | Purpose |
+|---|---|---|
+| `LDAP_URL` | `ldap://ldap-service:389` | Connection URL for the LDAP server |
+| `LDAP_BASE_DN` | `dc=itu,dc=edu,dc=ar` | Root of the directory tree |
+| `LDAP_BIND_DN` | `cn=admin,dc=itu,dc=edu,dc=ar` | Service account used for bind operations |
+| `LDAP_BIND_PASSWORD` | `admin_password` | Password for the service account |
+| `LDAP_USER_SEARCH_BASE` | `ou=usuarios,dc=itu,dc=edu,dc=ar` | Subtree searched when validating a login |
+
+When deploying on Kubernetes, store `LDAP_BIND_PASSWORD` in a `Secret` and inject it as an environment variable rather than placing it directly in the Deployment manifest:
+
+```yaml
+env:
+  - name: LDAP_BIND_PASSWORD
+    valueFrom:
+      secretKeyRef:
+        name: ldap-credentials
+        key: bind-password
+```
+
+## Test the LDAP Connection
+
+After the container is running and users have been added, verify connectivity and entry retrieval with `ldapsearch`:
+
+```bash
+ldapsearch -x -H ldap://localhost:389 \
+  -D "cn=admin,dc=itu,dc=edu,dc=ar" \
+  -w admin_password \
+  -b "ou=usuarios,dc=itu,dc=edu,dc=ar" "(uid=jdoe)"
+```
+
+A successful response returns the full attribute set for `uid=jdoe`. If you receive `ldap_bind: Invalid credentials (49)`, double-check the admin password. If you receive `No such object (32)`, the `ou=usuarios` organizational unit has not been created yet.
+
+From within the Kubernetes cluster, run the same search through the web pod to confirm internal DNS resolution:
+
+```bash
+kubectl exec -it <web-pod> -- \
+  ldapsearch -x -H ldap://ldap-service:389 \
+    -D "cn=admin,dc=itu,dc=edu,dc=ar" \
+    -w admin_password \
+    -b "ou=usuarios,dc=itu,dc=edu,dc=ar" "(uid=jdoe)"
+```
+
+<Warning>
+Plain LDAP (port 389) transmits credentials in clear text and is acceptable only in isolated local or development environments. For any deployment accessible over a network, configure **LDAPS** (LDAP over TLS) on port 636 using a valid certificate. The `osixia/openldap` image supports TLS via the `LDAP_TLS_*` environment variables.
+</Warning>

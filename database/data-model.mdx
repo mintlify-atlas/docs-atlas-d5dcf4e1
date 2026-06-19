@@ -1,0 +1,115 @@
+---
+title: "InventarioITU Dual-Database Data Model"
+sidebarTitle: "Data Model"
+description: "Understand how InventarioITU splits data across SQL Server and MongoDB: relational location and assignment records in SQL Server, flexible hardware documents in MongoDB."
+---
+
+InventarioITU deliberately stores its data across two databases because the two main categories of information have fundamentally different shapes. Lab room and equipment assignment data is highly structured and relational — labs have a fixed set of attributes, equipment belongs to exactly one lab, and assignment history forms an auditable chain of foreign-key-linked rows. Hardware component data, by contrast, is flexible and machine-specific: a workstation might have two GPUs and four storage drives while the machine next to it has none of either. Forcing hardware details into a fixed relational schema would require either wide sparse tables or many small auxiliary tables; a document database handles the variability more naturally. By splitting the data at this semantic boundary and linking the two stores by a shared equipment ID, InventarioITU gets the integrity and query power of SQL Server exactly where it needs it, and the schema flexibility of MongoDB everywhere else.
+
+## SQL Server Relational Model
+
+SQL Server hosts the `inventario` database, which contains three tables covering lab metadata, equipment registration, and assignment history.
+
+### `laboratorios`
+
+Stores one row per physical computer lab. This table is the top of the reference hierarchy — every registered machine belongs to a lab.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `INT IDENTITY PK` | Auto-incrementing surrogate key |
+| `nombre` | `NVARCHAR(100)` | Human-readable lab name (e.g. `Laboratorio 1`) |
+| `edificio` | `NVARCHAR(100)` | Building within ITU Mendoza campus |
+| `capacidad` | `INT` | Maximum number of workstations the room supports |
+
+### `equipos`
+
+Stores one row per registered machine. The `laboratorio_id` foreign key ties each machine to a specific lab, and `asignado_a` records the current user or department responsible for it.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `NVARCHAR(20) PK` | Human-readable composite key — also the MongoDB `_id` (e.g. `LAB01-PC-001`) |
+| `nombre` | `NVARCHAR(100)` | Descriptive machine name |
+| `laboratorio_id` | `INT FK → laboratorios.id` | Lab where the machine is physically located |
+| `asignado_a` | `NVARCHAR(200)` | LDAP username or department currently assigned |
+| `estado` | `NVARCHAR(50)` | Operational status — default `disponible` |
+| `fecha_ingreso` | `DATE` | Date the machine was first registered in the system |
+
+### `asignaciones` (Assignment History)
+
+An optional audit table that records every assignment change for a machine. This preserves accountability — who had a machine, when they received it, and when it was returned or reassigned.
+
+| Column | Type | Description |
+|---|---|---|
+| `id` | `INT IDENTITY PK` | Auto-incrementing record ID |
+| `equipo_id` | `NVARCHAR(20) FK → equipos.id` | Machine that was assigned |
+| `asignado_a` | `NVARCHAR(200)` | LDAP username or department that received the machine |
+| `fecha_desde` | `DATE` | Date the assignment began |
+| `fecha_hasta` | `DATE` | Date the assignment ended (NULL if currently active) |
+| `notas` | `NVARCHAR(500)` | Optional free-text notes about the assignment |
+
+## MongoDB Document Model
+
+MongoDB hosts the `inventario` database and a single collection, `componentes`, where each document represents the full hardware specification of one machine.
+
+### `componentes`
+
+Each document in `componentes` describes the physical hardware inside a single workstation. Because different machines have different configurations, the document schema is intentionally flexible — a machine without a dedicated GPU simply omits that field, rather than storing a null.
+
+```json
+{
+  "_id": "LAB01-PC-001",
+  "ubicacion": "Laboratorio 1",
+  "cpu": {
+    "modelo": "Intel Core i5-8400",
+    "nucleos": 6,
+    "frecuencia_ghz": 2.8
+  },
+  "ram": {
+    "capacidad_gb": 8,
+    "tipo": "DDR4"
+  },
+  "almacenamiento": [
+    { "tipo": "SSD", "capacidad_gb": 240 }
+  ],
+  "estado": "operativo"
+}
+```
+
+The `almacenamiento` field is an array, which cleanly represents machines with multiple drives (e.g. one SSD boot drive plus one HDD data drive) without any schema change. The same flexibility applies to peripherals, expansion cards, or any future hardware attribute — the collection schema grows organically as new machine types are registered.
+
+**Why MongoDB fits hardware data:**
+
+- **Variable drive configurations** — arrays accommodate any number of storage devices naturally.
+- **CPU topology differences** — a server-class machine may have socket count, NUMA nodes, and cache hierarchy fields that a standard workstation document simply omits.
+- **No migration cost on new attributes** — adding a `gpu` or `monitor` field to new documents does not require an `ALTER TABLE` or a backfill migration.
+- **Rich nested queries** — MongoDB's query language can filter by nested fields directly (e.g. find all machines with more than 16 GB of RAM) without joins.
+
+## Linking Strategy: Shared Equipment ID
+
+The two databases are linked at the application layer using a single shared key: the equipment ID string (e.g. `LAB01-PC-001`). This value is simultaneously the SQL Server `equipos.id` primary key and the MongoDB `componentes._id` field.
+
+```text
+SQL Server                          MongoDB
+──────────────────────────          ──────────────────────────────
+equipos.id = 'LAB01-PC-001'   ←→   componentes._id = 'LAB01-PC-001'
+```
+
+When `inventario-web` needs to display a full equipment record — location, assignment status, and hardware details — it executes one query against each database using this shared ID and merges the results in memory before rendering the response. No distributed join infrastructure is required.
+
+The ID format follows the convention `<LAB_CODE>-PC-<SEQUENCE>`, where:
+- `LAB_CODE` is a short uppercase code for the lab (e.g. `LAB01`, `LAB02`)
+- `PC` indicates a standard workstation (other prefixes could be used for servers or printers)
+- `SEQUENCE` is a zero-padded three-digit serial number within that lab
+
+## Data Distribution Summary
+
+| Data | Database | Reason |
+|---|---|---|
+| Lab rooms | SQL Server | Relational, normalized — labs are a stable reference entity |
+| Equipment location & assignment | SQL Server | Structured rows with FK relationships and enforceable constraints |
+| CPU, RAM, storage details | MongoDB | Variable schema per machine — flexible document model avoids sparse columns |
+| Assignment history | SQL Server | Auditable, relational — benefits from FK integrity and SQL aggregation queries |
+
+<Note>
+  The application layer (`inventario-web`) is the only component that queries both databases. It performs the logical join between `equipos` (SQL Server) and `componentes` (MongoDB) by equipment ID at request time. Neither database holds a reference to the other, and there is no cross-database foreign key constraint — consistency is maintained by convention and enforced in application code.
+</Note>

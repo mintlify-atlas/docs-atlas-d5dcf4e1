@@ -1,0 +1,87 @@
+---
+title: "Firewall Configuration with GUFW for InventarioITU"
+sidebarTitle: "Firewall"
+description: "Protect InventarioITU host nodes with GUFW firewall rules. Block external access to database and LDAP ports while allowing the web frontend on port 3000."
+---
+
+GUFW (Graphical Uncomplicated Firewall) is the host-level firewall used on Ubuntu nodes running the InventarioITU stack. Its role is to enforce a strict network boundary at the operating system level, ensuring that internal services such as SQL Server, MongoDB, and OpenLDAP are never reachable from outside the host. Only the `inventario-web` frontend on port 3000 is intentionally exposed. This complements, but does not replace, the Calico NetworkPolicies that govern pod-to-pod traffic inside the Kubernetes cluster — the two layers together provide defense in depth for the entire system.
+
+## Install and Enable GUFW
+
+Run the following commands on each Ubuntu or Debian host node that participates in the InventarioITU cluster:
+
+```bash
+sudo apt-get update && sudo apt-get install -y gufw
+sudo ufw enable
+```
+
+Enabling UFW sets the default policy to **deny all incoming** and **allow all outgoing** traffic. This is the correct baseline: the explicit rules added in the next section then punch only the necessary holes in the inbound policy.
+
+<Note>
+`gufw` installs both the graphical front-end and the underlying `ufw` command-line tool. All rules described in this guide use `ufw` directly so they can be applied on headless servers without a desktop environment.
+</Note>
+
+## Apply Recommended Firewall Rules
+
+With the default-deny policy in place, add the following rules to allow administrative access and the web frontend while explicitly blocking direct external access to all database and directory services:
+
+```bash
+# Allow web frontend
+sudo ufw allow 3000/tcp
+
+# Block external access to databases and LDAP
+sudo ufw deny 1433/tcp
+sudo ufw deny 27017/tcp
+sudo ufw deny 389/tcp
+
+# Allow SSH for administration
+sudo ufw allow 22/tcp
+```
+
+Rules are evaluated in the order they are added, but `ufw` gives precedence to more specific rules. Adding explicit `deny` rules for the database ports ensures that even if a misconfigured service binds to a public interface, the firewall prevents any connection from completing.
+
+<Tip>
+Enable UFW logging before your first deployment so you can observe which connections are being blocked and catch any misconfigured services early:
+
+```bash
+sudo ufw logging on
+```
+
+Log entries are written to `/var/log/ufw.log` and also appear in `journalctl -k`. Review the log after bringing up the stack for the first time to confirm no unexpected traffic is reaching the database ports.
+</Tip>
+
+## Verify the Active Rules
+
+After applying all rules, inspect the current policy to confirm every port is configured as intended:
+
+```bash
+sudo ufw status verbose
+```
+
+The output should list each rule alongside its action and direction. Look for `ALLOW IN` on ports 22 and 3000, and `DENY IN` on ports 389, 1433, and 27017.
+
+## Firewall Policy Summary
+
+The table below is the authoritative reference for the host-level network policy on all InventarioITU nodes:
+
+| Port | Protocol | Action | Service |
+|---|---|---|---|
+| 22 | TCP | ALLOW | SSH |
+| 3000 | TCP | ALLOW | inventario-web |
+| 1433 | TCP | DENY | SQL Server |
+| 27017 | TCP | DENY | MongoDB |
+| 389 | TCP | DENY | OpenLDAP |
+
+<Note>
+Internal pod-to-pod traffic within the Kubernetes cluster is governed entirely by **Calico NetworkPolicies** defined in `k8s/network-policies/`. GUFW operates at the host network boundary and does not inspect traffic that travels over the cluster overlay network. Both layers must be correctly configured for the system to be fully secured.
+</Note>
+
+## Persist Rules Across Reboots
+
+UFW rules added with `sudo ufw allow` and `sudo ufw deny` are automatically saved and restored on reboot. You can confirm the saved rule set at any time:
+
+```bash
+sudo ufw show added
+```
+
+If you ever need to reset the firewall to a clean state, run `sudo ufw reset` — this disables UFW and removes all rules, so reapply the rules above immediately afterward.
